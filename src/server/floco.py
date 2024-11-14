@@ -40,46 +40,29 @@ class FlocoServer(FedAvgServer):
     ):
         super().__init__(args, algorithm_name, unique_model, use_fedavg_client_cls, return_diff)
         self.init_trainer(FlocoClient)
-        self.client_gradient_dict = {}  # TODO move this to train_one_round?
+        self.projected_points = None
 
         if self.args.floco.pers_epoch > 0:
             self.clients_personalized_model_params = {i: deepcopy(self.model.state_dict()) for i in self.train_clients}
 
     def train_one_round(self):
-        if self.args.floco.tau == (self.current_epoch + 1):
-            # Sample all clients to get most up to date gradient, or simplex information
-            self.last_selected_client_cids = [client_id for client_id in self.selected_clients]
+        if self.args.floco.tau == self.current_epoch:
+            selected_clients = self.selected_clients  # save selected clients
+
+            # Collect gradients from all clients
             self.selected_clients = self.train_clients
-        elif self.args.floco.tau == self.current_epoch:
-            # Sort results
-            client_statistics = np.array([self.client_gradient_dict[key] for key in sorted(self.client_gradient_dict.keys())])
+            client_packages = self.trainer.train()
+            model_grad_type = "model_params_diff" if self.return_diff else "regular_model_params"
+            client_gradient_dict = {}
+            for client_id, package in client_packages.items():
+                # TODO fix
+                weights = [params.cpu().numpy() for params in package[model_grad_type].values()]
+                client_grads = [weights[-i].flatten() for i in range(1, self.args.floco.num_endpoints + 1)]
+                client_grads = np.concatenate(client_grads)
+                client_gradient_dict[client_id] = client_grads
 
-            # Projection
-            print('Projecting gradients ... ')
-            client_statistics = decomposition.PCA(n_components=self.args.floco.num_endpoints).fit_transform(client_statistics)
-            print('... finished PCA')
-
-            # Offset z optimization
-            statistics_over_z = []
-            energies_over_z = []
-            best_z = None
-            last_log_energy = np.inf
-            z_grid = np.linspace(1e-4, 1, 1000)
-            for i, z in enumerate(z_grid):
-                # 2. Optimized Simplex projection
-                final_client_statistics = projection_simplex(client_statistics, z=z, axis=1)
-                final_client_statistics /= final_client_statistics.sum(1).reshape(-1, 1)
-                statistics_over_z.append(final_client_statistics)
-                _, log_energy = compute_riesz_s_energy(final_client_statistics, d=2)
-                if log_energy not in [-np.inf, np.inf]:
-                    energies_over_z.append(log_energy)
-                    if log_energy < last_log_energy:
-                        best_z = i
-                        last_log_energy = log_energy
-            print('... finished z optimization')
-            projected_points = np.array(statistics_over_z)[best_z]
-
-            # (projected_points, self.args.floco.rho)
+            self.projected_points = compute_projected_points(client_gradient_dict, self.args.floco.num_endpoints)
+            self.selected_clients = selected_clients  # restore selected clients
 
         client_packages = self.trainer.train()
 
@@ -91,68 +74,45 @@ class FlocoServer(FedAvgServer):
 
     def package(self, client_id: int):
         server_package = super().package(client_id)
-        if self.current_epoch < self.args.floco.tau:
+        if self.projected_points is None:
             server_package["sample_from"] = "simplex_center" if self.testing else "simplex_uniform"
+            server_package["region"] = None
         else:
             server_package["sample_from"] = "region_center" if self.testing else "region_uniform"
+            server_package["region"] = (self.projected_points[client_id], self.args.floco.rho)
 
         if self.args.floco.pers_epoch > 0:
             server_package["personalized_model_params"] = self.clients_personalized_model_params[client_id]
         return server_package
 
-    @torch.no_grad()
-    def aggregate(self, clients_package: OrderedDict[int, dict[str, Any]]):
-        weights_results = [package for package in clients_package.values()]
-        if self.args.floco.tau == (self.current_epoch + 1):
-            weight_result_cids = np.array([client_id for client_id in clients_package.keys()])
 
-            # Sort client gradients/losses for later clustering
-            new_weight_results = []
-            for cid in self.last_selected_client_cids:
-                arg_id = np.argwhere(cid == np.array(weight_result_cids))[0][0]
-                client_weight_results = weights_results[arg_id]
-                new_weight_results.append(client_weight_results)
-            weights_results = new_weight_results
+def compute_projected_points(client_gradient_dict, num_endpoints):
+    # Sort results
+    client_statistics = np.array([client_gradient_dict[key] for key in sorted(client_gradient_dict.keys())])
 
-            # Save all client gradients/losses for later clustering
-            if self.return_diff:
-                model_grad_type = "model_params_diff"
-            else:
-                model_grad_type = "regular_model_params"
+    print('Projecting gradients ... ')
+    client_statistics = decomposition.PCA(n_components=num_endpoints).fit_transform(client_statistics)
+    print('... finished PCA')
 
-            for client_id, package in clients_package.items():
-                w = [val.cpu().numpy() for _, val in package[model_grad_type].items()]
-                client_grads = [w[-i].flatten() for i in range(1, self.args.floco.num_endpoints + 1)]
-                client_grads = np.concatenate(client_grads)
-                self.client_gradient_dict[client_id] = client_grads
-
-        ###
-
-        client_weights = [package["weight"] for package in weights_results]
-        weights = torch.tensor(client_weights) / sum(client_weights)
-
-        if self.return_diff:  # inputs are model params diff
-            for name, global_param in self.public_model_params.items():
-                diffs = torch.stack(
-                    [
-                        package["model_params_diff"][name]
-                        for package in weights_results
-                    ],
-                    dim=-1,
-                )
-                aggregated = torch.sum(diffs * weights, dim=-1)
-                self.public_model_params[name].data -= aggregated
-        else:
-            for name, global_param in self.public_model_params.items():
-                client_params = torch.stack(
-                    [
-                        package["regular_model_params"][name]
-                        for package in weights_results
-                    ],
-                    dim=-1,
-                )
-                aggregated = torch.sum(client_params * weights, dim=-1)
-                global_param.data = aggregated
+    # Offset z optimization
+    statistics_over_z = []
+    energies_over_z = []
+    best_z = None
+    last_log_energy = np.inf
+    z_grid = np.linspace(1e-4, 1, 1000)
+    for i, z in enumerate(z_grid):
+        # 2. Optimized Simplex projection
+        final_client_statistics = projection_simplex(client_statistics, z=z, axis=1)
+        final_client_statistics /= final_client_statistics.sum(1).reshape(-1, 1)
+        statistics_over_z.append(final_client_statistics)
+        _, log_energy = compute_riesz_s_energy(final_client_statistics, d=2)
+        if log_energy not in [-np.inf, np.inf]:
+            energies_over_z.append(log_energy)
+            if log_energy < last_log_energy:
+                best_z = i
+                last_log_energy = log_energy
+    print('... finished z optimization')
+    return np.array(statistics_over_z)[best_z]
 
 
 def projection_simplex(V, z=1, axis=None):
@@ -176,10 +136,8 @@ def projection_simplex(V, z=1, axis=None):
         rho = np.count_nonzero(cond, axis=1)
         theta = cssv[np.arange(len(V)), rho - 1] / rho
         return np.maximum(V - theta[:, np.newaxis], 0)
-
     elif axis == 0:
         return projection_simplex(V.T, z, axis=1).T
-
     else:
         V = V.ravel().reshape(1, -1)
         return projection_simplex(V, z, axis=1).ravel()

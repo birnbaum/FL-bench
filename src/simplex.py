@@ -1,11 +1,5 @@
 from __future__ import division, print_function, absolute_import
 import copy
-import matplotlib
-
-matplotlib.rcParams["pdf.fonttype"] = 42
-matplotlib.rcParams["ps.fonttype"] = 42
-matplotlib.rcParams["font.family"] = "serif"
-matplotlib.rcParams["font.size"] = 10
 
 # Grid resolution
 RES = 200
@@ -167,9 +161,6 @@ def set_net_alpha(net, alphas: tuple[float, ...]):
     for m in net.modules():
         if isinstance(m, SimplexLayer):
             m.set_alphas(alphas)
-
-
-
 
 
 def sample_model_point_estimate(model, new_model, sampling_point):
