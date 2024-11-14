@@ -48,20 +48,9 @@ class FlocoServer(FedAvgServer):
     def train_one_round(self):
         if self.args.floco.tau == self.current_epoch:
             selected_clients = self.selected_clients  # save selected clients
-
-            # Collect gradients from all clients
-            self.selected_clients = self.train_clients
+            self.selected_clients = self.train_clients  # collect gradients from all clients
             client_packages = self.trainer.train()
-            model_grad_type = "model_params_diff" if self.return_diff else "regular_model_params"
-            client_gradient_dict = {}
-            for client_id, package in client_packages.items():
-                # TODO fix
-                weights = [params.cpu().numpy() for params in package[model_grad_type].values()]
-                client_grads = [weights[-i].flatten() for i in range(1, self.args.floco.num_endpoints + 1)]
-                client_grads = np.concatenate(client_grads)
-                client_gradient_dict[client_id] = client_grads
-
-            self.projected_points = compute_projected_points(client_gradient_dict, self.args.floco.num_endpoints)
+            self.projected_points = compute_projected_points(client_packages, self.args.floco.num_endpoints, self.return_diff)
             self.selected_clients = selected_clients  # restore selected clients
 
         client_packages = self.trainer.train()
@@ -86,7 +75,16 @@ class FlocoServer(FedAvgServer):
         return server_package
 
 
-def compute_projected_points(client_gradient_dict, num_endpoints):
+def compute_projected_points(client_packages, num_endpoints, return_diff):
+    model_grad_type = "model_params_diff" if return_diff else "regular_model_params"
+    client_gradient_dict = {}
+    for client_id, package in client_packages.items():
+        # TODO fix
+        weights = [params.cpu().numpy() for params in package[model_grad_type].values()]
+        client_grads = [weights[-i].flatten() for i in range(1, num_endpoints + 1)]
+        client_grads = np.concatenate(client_grads)
+        client_gradient_dict[client_id] = client_grads
+
     # Sort results
     client_statistics = np.array([client_gradient_dict[key] for key in sorted(client_gradient_dict.keys())])
 
@@ -102,10 +100,10 @@ def compute_projected_points(client_gradient_dict, num_endpoints):
     z_grid = np.linspace(1e-4, 1, 1000)
     for i, z in enumerate(z_grid):
         # 2. Optimized Simplex projection
-        final_client_statistics = projection_simplex(client_statistics, z=z, axis=1)
+        final_client_statistics = projection_simplex(client_statistics, z=z)
         final_client_statistics /= final_client_statistics.sum(1).reshape(-1, 1)
         statistics_over_z.append(final_client_statistics)
-        _, log_energy = compute_riesz_s_energy(final_client_statistics, d=2)
+        log_energy = compute_riesz_s_energy(final_client_statistics, d=2)
         if log_energy not in [-np.inf, np.inf]:
             energies_over_z.append(log_energy)
             if log_energy < last_log_energy:
@@ -115,7 +113,7 @@ def compute_projected_points(client_gradient_dict, num_endpoints):
     return np.array(statistics_over_z)[best_z]
 
 
-def projection_simplex(V, z=1, axis=None):
+def projection_simplex(V, z=1):  # TODO simplify
     """
     Projection of x onto the simplex, scaled by z:
         P(x; z) = argmin_{y >= 0, sum(y) = z} ||y - x||^2
@@ -126,21 +124,15 @@ def projection_simplex(V, z=1, axis=None):
         axis=1: project each V[i] by P(V[i]; z[i])
         axis=0: project each V[:, j] by P(V[:, j]; z[j])
     """
-    if axis == 1:
-        n_features = V.shape[1]
-        U = np.sort(V, axis=1)[:, ::-1]
-        z = np.ones(len(V)) * z
-        cssv = np.cumsum(U, axis=1) - z[:, np.newaxis]
-        ind = np.arange(n_features) + 1
-        cond = U - cssv / ind > 0
-        rho = np.count_nonzero(cond, axis=1)
-        theta = cssv[np.arange(len(V)), rho - 1] / rho
-        return np.maximum(V - theta[:, np.newaxis], 0)
-    elif axis == 0:
-        return projection_simplex(V.T, z, axis=1).T
-    else:
-        V = V.ravel().reshape(1, -1)
-        return projection_simplex(V, z, axis=1).ravel()
+    n_features = V.shape[1]
+    U = np.sort(V, axis=1)[:, ::-1]
+    z = np.ones(len(V)) * z
+    cssv = np.cumsum(U, axis=1) - z[:, np.newaxis]
+    ind = np.arange(n_features) + 1
+    cond = U - cssv / ind > 0
+    rho = np.count_nonzero(cond, axis=1)
+    theta = cssv[np.arange(len(V)), rho - 1] / rho
+    return np.maximum(V - theta[:, np.newaxis], 0)
 
 
 def compute_riesz_s_energy(simplex_points, d=2):
@@ -151,15 +143,13 @@ def compute_riesz_s_energy(simplex_points, d=2):
     np.fill_diagonal(dist, np.inf)
     # epsilon which is the smallest distance possible to avoid an overflow during gradient calculation
     # eps = 10 ** (-320 / (d + 2))
-    eps = 1e-4
-    b = dist < eps
-    dist[b] = eps
+    epsilon = 1e-4
+    dist[dist < epsilon] = epsilon
     # select only upper triangular matrix to have each mutual distance once
     mutual_dist = dist[np.triu_indices(len(simplex_points), 1)]
     mutual_dist[np.argwhere(mutual_dist == 0).flatten()] = 1e-4
     # calculate the energy by summing up the squared distances
     energies = (1 / mutual_dist ** d)
-    energies = energies[~np.isnan(energies)]
-    energy = energies.sum()
-    log_energy = - np.log(len(mutual_dist)) + np.log(energy)
-    return energy, log_energy
+    energy = energies[~np.isnan(energies)].sum()
+    log_energy = -np.log(len(mutual_dist)) + np.log(energy)
+    return log_energy
