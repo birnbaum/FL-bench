@@ -22,11 +22,11 @@ class FlocoServer(FedAvgServer):
         parser.add_argument("--num_endpoints", type=int, default=1)  # TODO improve terminology
         parser.add_argument("--tau", type=int, default=100)  # TODO improve terminology
         parser.add_argument("--rho", type=float, default=0.1)  # TODO improve terminology
-        parser.add_argument("--finetune_region", type=str, default='sc')
-        parser.add_argument("--evaluate_region", type=str, default='sc')
+        parser.add_argument("--finetune_region", type=str, default='simplex_center')
+        parser.add_argument("--evaluate_region", type=str, default='simplex_center')
 
         # Floco+ (only used if pers_epoch > 0)
-        parser.add_argument("--pers_epoch", type=int, default=0)
+        parser.add_argument("--pers_epoch", type=int, default=0)  # TODO improve terminology
         parser.add_argument("--lamda", type=float, default=1)
 
         return parser.parse_args(args_list)
