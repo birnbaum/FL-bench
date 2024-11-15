@@ -27,9 +27,11 @@ class SimplexModel(DecoupledModel):
             num_endpoints=self.args.floco.num_endpoints, in_features=base_model.classifier.in_features, 
             out_features=NUM_CLASSES[self.args.dataset.name], bias=True, seed=self.args.common.seed)
         self.sample_from = "simplex_center"
+
     def set_subregion(self, sample_from: str, subregion_parameters: tuple):
         self.sample_from = sample_from
         self.center, self.radius = subregion_parameters
+
     def forward(self, x):
         if self.sample_from == "simplex_center":
             sampled_alpha = np.ones(self.args.floco.num_endpoints) / np.ones(self.args.floco.num_endpoints).sum()
@@ -68,17 +70,18 @@ class FlocoServer(FedAvgServer):
         self.model = SimplexModel(self.args)
         self.model.check_and_preprocess(self.args)
         self.init_trainer(FlocoClient)
-        self.projected_points = None
+        self.projected_clients = None
 
         if self.args.floco.pers_epoch > 0:
             self.clients_personalized_model_params = {i: deepcopy(self.model.state_dict()) for i in self.train_clients}
 
     def train_one_round(self):
         if self.args.floco.tau == self.current_epoch:
+            print("Projecting gradients ... ")
             selected_clients = self.selected_clients  # save selected clients
             self.selected_clients = self.train_clients  # collect gradients from all clients
             client_packages = self.trainer.train()
-            self.projected_points = compute_projected_points(client_packages, self.args.floco.num_endpoints, self.return_diff)
+            self.projected_clients = project_clients(client_packages, self.args.floco.num_endpoints, self.return_diff)
             self.selected_clients = selected_clients  # restore selected clients
 
         client_packages = self.trainer.train()
@@ -89,33 +92,26 @@ class FlocoServer(FedAvgServer):
 
     def package(self, client_id: int):
         server_package = super().package(client_id)
-        if self.projected_points is None:
+        if self.projected_clients is None:
             server_package["sample_from"] = "simplex_center" if self.testing else "simplex_uniform"
             server_package["subregion_parameters"] = None
         else:
             server_package["sample_from"] = "region_center" if self.testing else "region_uniform"
-            server_package["subregion_parameters"] = (self.projected_points[client_id], self.args.floco.rho)
+            server_package["subregion_parameters"] = (self.projected_clients[client_id], self.args.floco.rho)
         if self.args.floco.pers_epoch > 0:
             server_package["personalized_model_params"] = self.clients_personalized_model_params[client_id]
         return server_package
 
 
-def compute_projected_points(client_packages, num_endpoints, return_diff):
+def project_clients(client_packages, num_endpoints, return_diff):
     model_grad_type = "model_params_diff" if return_diff else "regular_model_params"
-    client_gradient_dict = {}
+    gradient_dict = {i: None for i in range(len(client_packages))}  # init sorted dict
     for client_id, package in client_packages.items():
-        # TODO fix
-        weights = [params.cpu().numpy() for params in package[model_grad_type].values()]
-        client_grads = [weights[-i].flatten() for i in range(1, num_endpoints + 1)]
-        client_grads = np.concatenate(client_grads)
-        client_gradient_dict[client_id] = client_grads
+        weights = [v.cpu().numpy().flatten() for k, v in package[model_grad_type].items() if "classifier._weights" in k]
+        gradient_dict[client_id] = np.concatenate(weights)
 
-    # Sort results
-    client_statistics = np.array([client_gradient_dict[key] for key in sorted(client_gradient_dict.keys())])
-
-    print('Projecting gradients ... ')
+    client_statistics = np.array(list(gradient_dict.values()))
     client_statistics = decomposition.PCA(n_components=num_endpoints).fit_transform(client_statistics)
-    print('... finished PCA')
 
     # Offset z optimization
     statistics_over_z = []
@@ -125,10 +121,10 @@ def compute_projected_points(client_packages, num_endpoints, return_diff):
     z_grid = np.linspace(1e-4, 1, 1000)
     for i, z in enumerate(z_grid):
         # 2. Optimized Simplex projection
-        final_client_statistics = projection_simplex(client_statistics, z=z)
-        final_client_statistics /= final_client_statistics.sum(1).reshape(-1, 1)
-        statistics_over_z.append(final_client_statistics)
-        log_energy = compute_riesz_s_energy(final_client_statistics, d=2)
+        statistics = projection_simplex(client_statistics, z=z)
+        statistics /= statistics.sum(1).reshape(-1, 1)
+        statistics_over_z.append(statistics)
+        log_energy = compute_riesz_s_energy(statistics, d=2)
         if log_energy not in [-np.inf, np.inf]:
             energies_over_z.append(log_energy)
             if log_energy < last_log_energy:
@@ -138,16 +134,10 @@ def compute_projected_points(client_packages, num_endpoints, return_diff):
     return np.array(statistics_over_z)[best_z]
 
 
-def projection_simplex(V, z=1):  # TODO simplify
-    """
-    Projection of x onto the simplex, scaled by z:
-        P(x; z) = argmin_{y >= 0, sum(y) = z} ||y - x||^2
-    z: float or array
-        If array, len(z) must be compatible with V
-    axis: None or int
-        axis=None: project V by P(V.ravel(); z)
-        axis=1: project each V[i] by P(V[i]; z[i])
-        axis=0: project each V[:, j] by P(V[:, j]; z[j])
+def projection_simplex(V, z):  # TODO simplify
+    """Projection of x onto the simplex, scaled by z.
+
+    P(x; z) = argmin_{y >= 0, sum(y) = z} ||y - x||^2
     """
     n_features = V.shape[1]
     U = np.sort(V, axis=1)[:, ::-1]
@@ -162,19 +152,14 @@ def projection_simplex(V, z=1):  # TODO simplify
 
 def compute_riesz_s_energy(simplex_points, d=2):
     diff = (simplex_points[:, None] - simplex_points[None, :])
-    # calculate the squared euclidean from each point to another
-    dist = np.sqrt((diff ** 2).sum(axis=2))
-    # make sure the distance to itself does not count
-    np.fill_diagonal(dist, np.inf)
-    # epsilon which is the smallest distance possible to avoid an overflow during gradient calculation
-    # eps = 10 ** (-320 / (d + 2))
-    epsilon = 1e-4
-    dist[dist < epsilon] = epsilon
+    distance = np.sqrt((diff ** 2).sum(axis=2))
+    np.fill_diagonal(distance, np.inf)
+    epsilon = 1e-4  # epsilon is the smallest distance possible to avoid overflow during gradient calculation
+    distance[distance < epsilon] = epsilon
     # select only upper triangular matrix to have each mutual distance once
-    mutual_dist = dist[np.triu_indices(len(simplex_points), 1)]
-    mutual_dist[np.argwhere(mutual_dist == 0).flatten()] = 1e-4
-    # calculate the energy by summing up the squared distances
-    energies = (1 / mutual_dist ** d)
+    mutual_dist = distance[np.triu_indices(len(simplex_points), 1)]
+    mutual_dist[np.argwhere(mutual_dist == 0).flatten()] = epsilon
+    energies = (1 / mutual_dist ** d)  # calculate energy by summing up the squared distances
     energy = energies[~np.isnan(energies)].sum()
     log_energy = -np.log(len(mutual_dist)) + np.log(energy)
     return log_energy
@@ -204,23 +189,6 @@ def seed_weights(weights: list, seed: int) -> None:
         torch.manual_seed(seed + i)
         torch.nn.init.xavier_normal_(weight)
 
-class StandardConv(torch.nn.Conv2d):
-    def __int__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def seed(self, s):
-        seed_weights([self.weight], s)
-        return self
-    
-
-class StandardLinear(torch.nn.Linear):
-    def __int__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def seed(self, s):
-        seed_weights([self.weight], s)
-        return self
-
 
 class SimplexLayer:
     def __init__(self, init_weight: torch.Tensor, num_endpoints: int, seed: int):
@@ -240,12 +208,6 @@ class SimplexLayer:
 
 
 class SimplexLinear(torch.nn.Linear, SimplexLayer):
-    def __init__(self, num_endpoints: int, seed: int, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        SimplexLayer.__init__(self, init_weight=self.weight, num_endpoints=num_endpoints, seed=seed)
-
-
-class SimplexConv(torch.nn.Conv2d, SimplexLayer):
     def __init__(self, num_endpoints: int, seed: int, *args, **kwargs):
         super().__init__(*args, **kwargs)
         SimplexLayer.__init__(self, init_weight=self.weight, num_endpoints=num_endpoints, seed=seed)
