@@ -27,16 +27,14 @@ class SimplexModel(DecoupledModel):
             num_endpoints=self.args.floco.num_endpoints, in_features=base_model.classifier.in_features, 
             out_features=NUM_CLASSES[self.args.dataset.name], bias=True, seed=self.args.common.seed)
         self.sample_from = "simplex_center"
-
-    def set_subregion(self, sample_from: str, subregion_parameters: tuple):
-        self.sample_from = sample_from
-        self.center, self.radius = subregion_parameters
+        self.subregion_parameters = None
 
     def forward(self, x):
         if self.sample_from == "simplex_center":
             sampled_alpha = np.ones(self.args.floco.num_endpoints) / np.ones(self.args.floco.num_endpoints).sum()
         else:
-            sampled_alpha = sample_L1_ball(self.center, self.radius, 1)
+            center, radius = self.subregion_parameters
+            sampled_alpha = sample_L1_ball(center, radius, 1)
         set_net_alpha(self.classifier, sampled_alpha)
         return self.classifier(self.base(x))
 

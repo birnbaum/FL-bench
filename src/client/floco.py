@@ -15,7 +15,8 @@ class FlocoClient(FedAvgClient):
     def set_parameters(self, package: dict[str, Any]):
         super().set_parameters(package)
         if package["subregion_parameters"]:
-            self.model.set_subregion(package["sample_from"], package["subregion_parameters"])
+            self.model.sample_from = package["sample_from"]
+            self.model.subregion_parameters = package["subregion_parameters"]
         self.global_params = OrderedDict(
             (key, param.to(self.device))
             for key, param in package["regular_model_params"].items()
