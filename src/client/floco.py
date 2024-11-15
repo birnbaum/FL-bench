@@ -54,14 +54,17 @@ def training_loop(model, dataset, dataloader, local_epoch, optimizer, criterion,
             optimizer.zero_grad()  # TODO switched
             loss = criterion(logit, y)  # TODO switched
             if reg_model_params is not None:  # TODO what is this?
-                for pers_param, global_param in zip(model.parameters(), reg_model_params):
+                for pers_param, global_param in zip(
+                    model.parameters(), reg_model_params
+                ):
                     if pers_param.requires_grad:
                         try:
-                            pers_param.grad.data += lamda * (pers_param.data - global_param.data)
+                            pers_param.grad.data += lamda * (
+                                pers_param.data - global_param.data
+                            )
                         except:
                             pass
             loss.backward()
             optimizer.step()
         if lr_scheduler is not None:
             lr_scheduler.step()
-    

@@ -21,11 +21,15 @@ class SimplexModel(DecoupledModel):
         base_model = MODELS[self.args.model.name](
             dataset=self.args.dataset.name,
             pretrained=self.args.model.use_torchvision_pretrained_weights,
-        ) 
+        )
         self.base = base_model.base
         self.classifier = SimplexLinear(
-            num_endpoints=self.args.floco.num_endpoints, in_features=base_model.classifier.in_features, 
-            out_features=NUM_CLASSES[self.args.dataset.name], bias=True, seed=self.args.common.seed)
+            num_endpoints=self.args.floco.num_endpoints,
+            in_features=base_model.classifier.in_features,
+            out_features=NUM_CLASSES[self.args.dataset.name],
+            bias=True,
+            seed=self.args.common.seed,
+        )
         self.sample_from = "simplex_center"
         self.subregion_parameters = None
 
@@ -85,19 +89,30 @@ class FlocoServer(FedAvgServer):
         client_packages = self.trainer.train()
         if self.args.floco.pers_epoch > 0:
             for client_id in self.selected_clients:
-                self.clients_personalized_model_params[client_id] = client_packages[client_id]["personalized_model_params"]
+                self.clients_personalized_model_params[client_id] = client_packages[
+                    client_id
+                ]["personalized_model_params"]
         self.aggregate(client_packages)
 
     def package(self, client_id: int):
         server_package = super().package(client_id)
         if self.projected_clients is None:
-            server_package["sample_from"] = "simplex_center" if self.testing else "simplex_uniform"
+            server_package["sample_from"] = (
+                "simplex_center" if self.testing else "simplex_uniform"
+            )
             server_package["subregion_parameters"] = None
         else:
-            server_package["sample_from"] = "region_center" if self.testing else "region_uniform"
-            server_package["subregion_parameters"] = (self.projected_clients[client_id], self.args.floco.rho)
+            server_package["sample_from"] = (
+                "region_center" if self.testing else "region_uniform"
+            )
+            server_package["subregion_parameters"] = (
+                self.projected_clients[client_id],
+                self.args.floco.rho,
+            )
         if self.args.floco.pers_epoch > 0:
-            server_package["personalized_model_params"] = self.clients_personalized_model_params[client_id]
+            server_package["personalized_model_params"] = (
+                self.clients_personalized_model_params[client_id]
+            )
         return server_package
 
 
@@ -105,11 +120,17 @@ def project_clients(client_packages, num_endpoints, return_diff):
     model_grad_type = "model_params_diff" if return_diff else "regular_model_params"
     gradient_dict = {i: None for i in range(len(client_packages))}  # init sorted dict
     for client_id, package in client_packages.items():
-        weights = [v.cpu().numpy().flatten() for k, v in package[model_grad_type].items() if "classifier._weights" in k]
+        weights = [
+            v.cpu().numpy().flatten()
+            for k, v in package[model_grad_type].items()
+            if "classifier._weights" in k
+        ]
         gradient_dict[client_id] = np.concatenate(weights)
 
     client_statistics = np.array(list(gradient_dict.values()))
-    client_statistics = decomposition.PCA(n_components=num_endpoints).fit_transform(client_statistics)
+    client_statistics = decomposition.PCA(n_components=num_endpoints).fit_transform(
+        client_statistics
+    )
 
     # Offset z optimization
     statistics_over_z = []
@@ -128,7 +149,6 @@ def project_clients(client_packages, num_endpoints, return_diff):
             if log_energy < last_log_energy:
                 best_z = i
                 last_log_energy = log_energy
-    print('... finished z optimization')
     return np.array(statistics_over_z)[best_z]
 
 
@@ -149,8 +169,8 @@ def projection_simplex(V, z):  # TODO simplify
 
 
 def compute_riesz_s_energy(simplex_points, d=2):
-    diff = (simplex_points[:, None] - simplex_points[None, :])
-    distance = np.sqrt((diff ** 2).sum(axis=2))
+    diff = simplex_points[:, None] - simplex_points[None, :]
+    distance = np.sqrt((diff**2).sum(axis=2))
     np.fill_diagonal(distance, np.inf)
     epsilon = 1e-4  # epsilon is the smallest distance possible to avoid overflow during gradient calculation
     distance[distance < epsilon] = epsilon
@@ -162,7 +182,7 @@ def compute_riesz_s_energy(simplex_points, d=2):
     log_energy = -np.log(len(mutual_dist)) + np.log(energy)
     return log_energy
 
- 
+
 def sample_L1_ball(center, radius, num_samples):
     dim = len(center)
     samples = np.zeros((num_samples, dim))
