@@ -37,6 +37,7 @@ class SimplexModel(DecoupledModel):
         set_net_alpha(self.classifier, sampled_alpha)
         return self.classifier(self.base(x))
 
+
 class FlocoServer(FedAvgServer):
 
     @staticmethod
@@ -95,7 +96,6 @@ class FlocoServer(FedAvgServer):
         else:
             server_package["sample_from"] = "region_center" if self.testing else "region_uniform"
             server_package["subregion_parameters"] = (self.projected_points[client_id], self.args.floco.rho)
-
         if self.args.floco.pers_epoch > 0:
             server_package["personalized_model_params"] = self.clients_personalized_model_params[client_id]
         return server_package
@@ -127,7 +127,6 @@ def compute_projected_points(client_packages, num_endpoints, return_diff):
     for i, z in enumerate(z_grid):
         # 2. Optimized Simplex projection
         final_client_statistics = projection_simplex(client_statistics, z=z)
-        print(final_client_statistics.shape)
         final_client_statistics /= final_client_statistics.sum(1).reshape(-1, 1)
         statistics_over_z.append(final_client_statistics)
         log_energy = compute_riesz_s_energy(final_client_statistics, d=2)
@@ -181,7 +180,7 @@ def compute_riesz_s_energy(simplex_points, d=2):
     log_energy = -np.log(len(mutual_dist)) + np.log(energy)
     return log_energy
 
-
+ 
 def sample_L1_ball(center, radius, num_samples):
     dim = len(center)
     samples = np.zeros((num_samples, dim))
