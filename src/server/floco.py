@@ -14,35 +14,6 @@ from src.utils.models import MODELS, DecoupledModel
 from src.utils.tools import Namespace
 
 
-class SimplexModel(DecoupledModel):
-    def __init__(self, args) -> None:
-        super().__init__()
-        self.args = args
-        base_model = MODELS[self.args.model.name](
-            dataset=self.args.dataset.name,
-            pretrained=self.args.model.use_torchvision_pretrained_weights,
-        )
-        self.base = base_model.base
-        self.classifier = SimplexLinear(
-            num_endpoints=self.args.floco.num_endpoints,
-            in_features=base_model.classifier.in_features,
-            out_features=NUM_CLASSES[self.args.dataset.name],
-            bias=True,
-            seed=self.args.common.seed,
-        )
-        self.sample_from = "simplex_center"
-        self.subregion_parameters = None
-
-    def forward(self, x):
-        if self.sample_from == "simplex_center":
-            sampled_alpha = np.ones(self.args.floco.num_endpoints) / np.ones(self.args.floco.num_endpoints).sum()
-        else:
-            center, radius = self.subregion_parameters
-            sampled_alpha = sample_L1_ball(center, radius, 1)
-        set_net_alpha(self.classifier, sampled_alpha)
-        return self.classifier(self.base(x))
-
-
 class FlocoServer(FedAvgServer):
 
     @staticmethod
@@ -55,9 +26,9 @@ class FlocoServer(FedAvgServer):
         parser.add_argument("--evaluate_region", type=str, default='simplex_center')
 
         # Floco+ (only used if pers_epoch > 0)
-        parser.add_argument("--pers_epoch", type=int, default=0)  # TODO improve terminology
+        parser.add_argument("--pers_epoch", type=int, default=0)
         parser.add_argument("--lamda", type=float, default=1)
-
+        
         return parser.parse_args(args_list)
 
     def __init__(
@@ -68,22 +39,28 @@ class FlocoServer(FedAvgServer):
         use_fedavg_client_cls=True,
         return_diff=False,
     ):
-        super().__init__(args, algorithm_name, unique_model, use_fedavg_client_cls, return_diff)
+        super().__init__(
+            args, algorithm_name, unique_model, use_fedavg_client_cls, return_diff
+        )
         self.model = SimplexModel(self.args)
         self.model.check_and_preprocess(self.args)
         self.init_trainer(FlocoClient)
         self.projected_clients = None
 
         if self.args.floco.pers_epoch > 0:
-            self.clients_personalized_model_params = {i: deepcopy(self.model.state_dict()) for i in self.train_clients}
+            self.clients_personalized_model_params = {
+                i: deepcopy(self.model.state_dict()) for i in self.train_clients
+            }
 
     def train_one_round(self):
         if self.args.floco.tau == self.current_epoch:
             print("Projecting gradients ... ")
             selected_clients = self.selected_clients  # save selected clients
-            self.selected_clients = self.train_clients  # collect gradients from all clients
+            self.selected_clients = self.train_clients  # collect gradients
             client_packages = self.trainer.train()
-            self.projected_clients = project_clients(client_packages, self.args.floco.num_endpoints, self.return_diff)
+            self.projected_clients = project_clients(
+                client_packages, self.args.floco.endpoints, self.return_diff
+            )
             self.selected_clients = selected_clients  # restore selected clients
 
         client_packages = self.trainer.train()
@@ -103,7 +80,7 @@ class FlocoServer(FedAvgServer):
             server_package["subregion_parameters"] = None
         else:
             server_package["sample_from"] = (
-                "region_center" if self.testing else "region_uniform"
+                "subregion_center" if self.testing else "region_uniform"
             )
             server_package["subregion_parameters"] = (
                 self.projected_clients[client_id],
@@ -116,43 +93,79 @@ class FlocoServer(FedAvgServer):
         return server_package
 
 
-def project_clients(client_packages, num_endpoints, return_diff):
+class SimplexModel(DecoupledModel):
+    def __init__(self, args) -> None:
+        super().__init__()
+        self.args = args
+        base_model = MODELS[self.args.model.name](
+            dataset=self.args.dataset.name,
+            pretrained=self.args.model.use_torchvision_pretrained_weights,
+        )
+        self.base = base_model.base
+        self.classifier = SimplexLinear(
+            endpoints=self.args.floco.endpoints,
+            in_features=base_model.classifier.in_features,
+            out_features=NUM_CLASSES[self.args.dataset.name],
+            bias=True,
+            seed=self.args.common.seed,
+        )
+        self.sample_from = "simplex_center"
+        self.subregion_parameters = None
+
+    def forward(self, x):
+        if self.sample_from == "simplex_center":
+            alphas = np.ones(self.args.floco.endpoints) / np.ones(self.args.floco.endpoints).sum()
+        else:
+            center, radius = self.subregion_parameters
+            alphas = sample_L1_ball(center, radius, 1)
+        self.classifier.set_alphas(alphas)
+        return super().forward(x)
+
+
+class SimplexLinear(torch.nn.Linear):
+    def __init__(self, endpoints: int, seed: int, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.endpoints = endpoints
+        self._alphas = tuple([1 / endpoints for _ in range(endpoints)])
+        self._weights = torch.nn.ParameterList(
+            [_initialize_weight(self.weight, seed + i) for i in range(endpoints)]
+        )
+
+    @property
+    def weight(self) -> torch.nn.Parameter:
+        return sum(alpha * weight for alpha, weight in zip(self._alphas, self._weights))
+
+    def set_alphas(self, alphas: Union[tuple[float], Literal["center"]]):
+        assert len(alphas) == len(self._weights)
+        self._alphas = alphas
+
+
+def project_clients(client_packages, endpoints, return_diff):
     model_grad_type = "model_params_diff" if return_diff else "regular_model_params"
     gradient_dict = {i: None for i in range(len(client_packages))}  # init sorted dict
     for client_id, package in client_packages.items():
-        weights = [
+        gradient_dict[client_id] = np.concatenate([
             v.cpu().numpy().flatten()
             for k, v in package[model_grad_type].items()
             if "classifier._weights" in k
-        ]
-        gradient_dict[client_id] = np.concatenate(weights)
+        ])
+    client_stats = np.array(list(gradient_dict.values()))
+    pca_stats = decomposition.PCA(n_components=endpoints).fit_transform(client_stats)
 
-    client_statistics = np.array(list(gradient_dict.values()))
-    client_statistics = decomposition.PCA(n_components=num_endpoints).fit_transform(
-        client_statistics
-    )
-
-    # Offset z optimization
-    statistics_over_z = []
-    energies_over_z = []
-    best_z = None
-    last_log_energy = np.inf
-    z_grid = np.linspace(1e-4, 1, 1000)
-    for i, z in enumerate(z_grid):
-        # 2. Optimized Simplex projection
-        statistics = projection_simplex(client_statistics, z=z)
-        statistics /= statistics.sum(1).reshape(-1, 1)
-        statistics_over_z.append(statistics)
-        log_energy = compute_riesz_s_energy(statistics, d=2)
-        if log_energy not in [-np.inf, np.inf]:
-            energies_over_z.append(log_energy)
-            if log_energy < last_log_energy:
-                best_z = i
-                last_log_energy = log_energy
-    return np.array(statistics_over_z)[best_z]
+    # Find optimal projection
+    lowest_log_energy = np.inf
+    best_projection = None
+    for i, z in enumerate(np.linspace(1e-4, 1, 1000)):
+        projection = _project_client(pca_stats, z=z)
+        projection /= projection.sum(axis=1, keepdims=True)
+        log_energy = _riesz_s_energy(projection)
+        if log_energy not in [-np.inf, np.inf] and log_energy < lowest_log_energy:
+            lowest_log_energy = log_energy
+            best_projection = projection
+    return best_projection
 
 
-def projection_simplex(V, z):  # TODO simplify
+def _project_client(V, z):  # TODO what is V?
     """Projection of x onto the simplex, scaled by z.
 
     P(x; z) = argmin_{y >= 0, sum(y) = z} ||y - x||^2
@@ -168,7 +181,7 @@ def projection_simplex(V, z):  # TODO simplify
     return np.maximum(V - theta[:, np.newaxis], 0)
 
 
-def compute_riesz_s_energy(simplex_points, d=2):
+def _riesz_s_energy(simplex_points):
     diff = simplex_points[:, None] - simplex_points[None, :]
     distance = np.sqrt((diff**2).sum(axis=2))
     np.fill_diagonal(distance, np.inf)
@@ -177,7 +190,7 @@ def compute_riesz_s_energy(simplex_points, d=2):
     # select only upper triangular matrix to have each mutual distance once
     mutual_dist = distance[np.triu_indices(len(simplex_points), 1)]
     mutual_dist[np.argwhere(mutual_dist == 0).flatten()] = epsilon
-    energies = (1 / mutual_dist ** d)  # calculate energy by summing up the squared distances
+    energies = (1 / mutual_dist ** 2)  # calculate energy by summing up the squared distances
     energy = energies[~np.isnan(energies)].sum()
     log_energy = -np.log(len(mutual_dist)) + np.log(energy)
     return log_energy
@@ -193,42 +206,6 @@ def sample_L1_ball(center, radius, num_samples):
     r = np.random.uniform(0, radius)
     samples = center + r * u
     return samples
-
-
-def set_net_alpha(net, alphas: tuple[float, ...]):
-    for m in net.modules():
-        if isinstance(m, SimplexLayer):
-            m.set_alphas(alphas)
-
-
-def seed_weights(weights: list, seed: int) -> None:
-    """Seed the weights of a list of nn.Parameter objects."""
-    for i, weight in enumerate(weights):
-        torch.manual_seed(seed + i)
-        torch.nn.init.xavier_normal_(weight)
-
-
-class SimplexLayer:
-    def __init__(self, init_weight: torch.Tensor, num_endpoints: int, seed: int):
-        self.num_endpoints = num_endpoints
-        self._alphas = tuple([1/num_endpoints for _ in range(num_endpoints)])  # set by the train() method each round
-        self._weights = torch.nn.ParameterList([_initialize_weight(init_weight, seed + i) for i in range(num_endpoints)])
-
-    @property
-    def weight(self) -> torch.nn.Parameter:
-        return sum(alpha * weight for alpha, weight in zip(self._alphas, self._weights))
-
-    def set_alphas(self, alphas: Union[tuple[float], Literal["center"]]):
-        if len(alphas) == len(self._weights):
-            self._alphas = alphas
-        else:
-            raise ValueError(f"alphas must match number of simplex endpoints ({self.num_endpoints})")
-
-
-class SimplexLinear(torch.nn.Linear, SimplexLayer):
-    def __init__(self, num_endpoints: int, seed: int, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        SimplexLayer.__init__(self, init_weight=self.weight, num_endpoints=num_endpoints, seed=seed)
 
 
 def _initialize_weight(init_weight: torch.Tensor, seed: int) -> torch.nn.Parameter:
