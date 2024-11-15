@@ -34,17 +34,39 @@ class FlocoClient(FedAvgClient):
         return client_package
 
     def fit(self):
+        common_params = dict(
+            dataset=self.dataset,
+            dataloader=self.trainloader,
+            optimizer=self.optimizer,
+            criterion=self.criterion,
+            lr_scheduler=self.lr_scheduler,
+            device=self.device,
+        )
         # Train global solution simplex
-        training_loop(self.model, self.dataset, self.trainloader, self.local_epoch, 
-                      self.optimizer, self.criterion, self.lr_scheduler, self.device)
+        training_loop(model=self.model, local_epoch=self.local_epoch, **common_params)
         if self.args.floco.pers_epoch > 0:
-            # Train personalized solution simplex
-            training_loop(self.pers_model, self.dataset, self.trainloader, self.args.floco.pers_epoch,
-                          self.optimizer,  self.criterion, self.lr_scheduler, self.device,
-                          self.global_params, self.args.floco.lamda)
-                
+            # Train personalized solution simplex (Floco+)
+            training_loop(
+                model=self.pers_model,
+                local_epoch=self.args.floco.pers_epoch,
+                reg_model_params=self.global_params,
+                lamda=self.args.floco.lamda,
+                **common_params
+            )
 
-def training_loop(model, dataset, dataloader, local_epoch, optimizer, criterion, lr_scheduler, device, reg_model_params=None, lamda=1):
+
+def training_loop(
+    model,
+    dataset,
+    dataloader,
+    local_epoch,
+    optimizer,
+    criterion,
+    lr_scheduler,
+    device,
+    reg_model_params=None,
+    lamda=1,
+):
     model.train()
     dataset.train()
     for _ in range(local_epoch):
