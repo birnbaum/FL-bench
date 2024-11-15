@@ -1,16 +1,41 @@
+from typing import Any, Union, Literal
 from argparse import ArgumentParser
-from collections import OrderedDict
 from copy import deepcopy
-from typing import Any
 
-import numpy as np
 import torch
+import numpy as np
 from omegaconf import DictConfig
 from sklearn import decomposition
-from src.client.floco import FlocoClient
 
-from src.server.fedavg import FedAvgServer
 from src.utils.tools import Namespace
+from src.client.floco import FlocoClient
+from src.server.fedavg import FedAvgServer
+from src.utils.constants import NUM_CLASSES
+from src.utils.models import MODELS, DecoupledModel
+
+class SimplexModel(DecoupledModel):
+    def __init__(self, args) -> None:
+        super().__init__()
+        self.args = args
+        base_model = MODELS[self.args.model.name](
+            dataset=self.args.dataset.name,
+            pretrained=self.args.model.use_torchvision_pretrained_weights,
+        ) 
+        self.base = base_model.base
+        self.classifier = SimplexLinear(
+            num_endpoints=self.args.floco.num_endpoints, in_features=base_model.classifier.in_features, 
+            out_features=NUM_CLASSES[self.args.dataset.name], bias=True, seed=self.args.common.seed)
+        self.sample_from = "simplex_center"
+    def set_subregion(self, sample_from: str, subregion_parameters: tuple):
+        self.sample_from = sample_from
+        self.center, self.radius = subregion_parameters
+    def forward(self, x):
+        if self.sample_from == "simplex_center":
+            sampled_alpha = np.ones(self.args.floco.num_endpoints) / np.ones(self.args.floco.num_endpoints).sum()
+        else:
+            sampled_alpha = sample_L1_ball(self.center, self.radius, 1)
+        set_net_alpha(self.classifier, sampled_alpha)
+        return self.classifier(self.base(x))
 
 
 class FlocoServer(FedAvgServer):
@@ -39,6 +64,8 @@ class FlocoServer(FedAvgServer):
         return_diff=False,
     ):
         super().__init__(args, algorithm_name, unique_model, use_fedavg_client_cls, return_diff)
+        self.model = SimplexModel(self.args)
+        self.model.check_and_preprocess(self.args)
         self.init_trainer(FlocoClient)
         self.projected_points = None
 
@@ -65,11 +92,10 @@ class FlocoServer(FedAvgServer):
         server_package = super().package(client_id)
         if self.projected_points is None:
             server_package["sample_from"] = "simplex_center" if self.testing else "simplex_uniform"
-            server_package["region"] = None
+            server_package["subregion_parameters"] = None
         else:
             server_package["sample_from"] = "region_center" if self.testing else "region_uniform"
-            server_package["region"] = (self.projected_points[client_id], self.args.floco.rho)
-
+            server_package["subregion_parameters"] = (self.projected_points[client_id], self.args.floco.rho)
         if self.args.floco.pers_epoch > 0:
             server_package["personalized_model_params"] = self.clients_personalized_model_params[client_id]
         return server_package
@@ -153,3 +179,81 @@ def compute_riesz_s_energy(simplex_points, d=2):
     energy = energies[~np.isnan(energies)].sum()
     log_energy = -np.log(len(mutual_dist)) + np.log(energy)
     return log_energy
+
+ 
+def sample_L1_ball(center, radius, num_samples):
+    dim = len(center)
+    samples = np.zeros((num_samples, dim))
+    # Generate a point on the surface of the L1 unit ball
+    u = np.random.uniform(-1, 1, dim)
+    u = np.sign(u) * (np.abs(u) / np.sum(np.abs(u)))
+    # Scale the point to fit within the radius
+    r = np.random.uniform(0, radius)
+    samples = center + r * u
+    return samples
+
+
+def set_net_alpha(net, alphas: tuple[float, ...]):
+    for m in net.modules():
+        if isinstance(m, SimplexLayer):
+            m.set_alphas(alphas)
+
+
+def seed_weights(weights: list, seed: int) -> None:
+    """Seed the weights of a list of nn.Parameter objects."""
+    for i, weight in enumerate(weights):
+        torch.manual_seed(seed + i)
+        torch.nn.init.xavier_normal_(weight)
+
+class StandardConv(torch.nn.Conv2d):
+    def __int__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def seed(self, s):
+        seed_weights([self.weight], s)
+        return self
+    
+
+class StandardLinear(torch.nn.Linear):
+    def __int__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def seed(self, s):
+        seed_weights([self.weight], s)
+        return self
+
+
+class SimplexLayer:
+    def __init__(self, init_weight: torch.Tensor, num_endpoints: int, seed: int):
+        self.num_endpoints = num_endpoints
+        self._alphas = tuple([1/num_endpoints for _ in range(num_endpoints)])  # set by the train() method each round
+        self._weights = torch.nn.ParameterList([_initialize_weight(init_weight, seed + i) for i in range(num_endpoints)])
+
+    @property
+    def weight(self) -> torch.nn.Parameter:
+        return sum(alpha * weight for alpha, weight in zip(self._alphas, self._weights))
+
+    def set_alphas(self, alphas: Union[tuple[float], Literal["center"]]):
+        if len(alphas) == len(self._weights):
+            self._alphas = alphas
+        else:
+            raise ValueError(f"alphas must match number of simplex endpoints ({self.num_endpoints})")
+
+
+class SimplexLinear(torch.nn.Linear, SimplexLayer):
+    def __init__(self, num_endpoints: int, seed: int, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        SimplexLayer.__init__(self, init_weight=self.weight, num_endpoints=num_endpoints, seed=seed)
+
+
+class SimplexConv(torch.nn.Conv2d, SimplexLayer):
+    def __init__(self, num_endpoints: int, seed: int, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        SimplexLayer.__init__(self, init_weight=self.weight, num_endpoints=num_endpoints, seed=seed)
+
+
+def _initialize_weight(init_weight: torch.Tensor, seed: int) -> torch.nn.Parameter:
+    weight = torch.nn.Parameter(torch.zeros_like(init_weight))
+    torch.manual_seed(seed)
+    torch.nn.init.xavier_normal_(weight)
+    return weight
