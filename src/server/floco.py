@@ -1,17 +1,18 @@
-from typing import Any, Union, Literal
 from argparse import ArgumentParser
 from copy import deepcopy
+from typing import Union, Literal
 
-import torch
 import numpy as np
+import torch
 from omegaconf import DictConfig
 from sklearn import decomposition
 
-from src.utils.tools import Namespace
 from src.client.floco import FlocoClient
 from src.server.fedavg import FedAvgServer
 from src.utils.constants import NUM_CLASSES
 from src.utils.models import MODELS, DecoupledModel
+from src.utils.tools import Namespace
+
 
 class SimplexModel(DecoupledModel):
     def __init__(self, args) -> None:
@@ -81,11 +82,9 @@ class FlocoServer(FedAvgServer):
             self.selected_clients = selected_clients  # restore selected clients
 
         client_packages = self.trainer.train()
-
         if self.args.floco.pers_epoch > 0:
             for client_id in self.selected_clients:
                 self.clients_personalized_model_params[client_id] = client_packages[client_id]["personalized_model_params"]
-
         self.aggregate(client_packages)
 
     def package(self, client_id: int):

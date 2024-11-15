@@ -1,9 +1,9 @@
-from copy import deepcopy
 from collections import OrderedDict
+from copy import deepcopy
 from typing import Any
-import torch
-from src.utils.metrics import Metrics
+
 from src.client.fedavg import FedAvgClient
+
 
 class FlocoClient(FedAvgClient):
     def __init__(self, **commons):
