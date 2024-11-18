@@ -202,7 +202,8 @@ def parse_args(
 
         cluster_resources = ray.cluster_resources()
         final_args.parallel.num_cpus = cluster_resources["CPU"]
-        final_args.parallel.num_gpus = cluster_resources["GPU"]
+        if final_args.parallel.num_gpus > 0:
+            final_args.parallel.num_gpus = cluster_resources["GPU"]
         if final_args.parallel.num_workers < 2:
             print(
                 f"num_workers is less than 2: {final_args.parallel.num_workers}, "
