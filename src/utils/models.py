@@ -1,3 +1,5 @@
+from typing import Union, Literal
+
 from collections import OrderedDict
 from functools import partial
 from typing import Optional
@@ -9,6 +11,57 @@ from omegaconf import DictConfig
 from torch import Tensor
 
 from src.utils.constants import DATA_SHAPE, INPUT_CHANNELS, NUM_CLASSES
+
+def seed_weights(weights: list, seed: int) -> None:
+    """Seed the weights of a list of nn.Parameter objects."""
+    for i, weight in enumerate(weights):
+        torch.manual_seed(seed + i)
+        torch.nn.init.xavier_normal_(weight)
+
+class StandardConv(nn.Conv2d):
+    def __int__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def seed(self, s):
+        seed_weights([self.weight], s)
+        return self
+    
+
+class StandardLinear(nn.Linear):
+    def __int__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def seed(self, s):
+        seed_weights([self.weight], s)
+        return self
+    
+class SimplexLayer:
+    def __init__(self, init_weight: torch.Tensor, num_endpoints: int, seed: int):
+        self.num_endpoints = num_endpoints
+        self._alphas = tuple([1/num_endpoints for _ in range(num_endpoints)])  # set by the train() method each round
+        self._weights = nn.ParameterList([_initialize_weight(init_weight, seed + i) for i in range(num_endpoints)])
+
+    @property
+    def weight(self) -> nn.Parameter:
+        return sum(alpha * weight for alpha, weight in zip(self._alphas, self._weights))
+
+    def set_alphas(self, alphas: Union[tuple[float], Literal["center"]]):
+        if len(alphas) == len(self._weights):
+            self._alphas = alphas
+        else:
+            raise ValueError(f"alphas must match number of simplex endpoints ({self.num_endpoints})")
+
+
+class SimplexLinear(nn.Linear, SimplexLayer):
+    def __init__(self, num_endpoints: int, seed: int, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        SimplexLayer.__init__(self, init_weight=self.weight, num_endpoints=num_endpoints, seed=seed)
+
+def _initialize_weight(init_weight: torch.Tensor, seed: int) -> nn.Parameter:
+    weight = nn.Parameter(torch.zeros_like(init_weight))
+    torch.manual_seed(seed)
+    torch.nn.init.xavier_normal_(weight)
+    return weight
 
 
 class DecoupledModel(nn.Module):
@@ -351,6 +404,27 @@ class MobileNet(DecoupledModel):
         if x.shape[1] == 1:
             x = x.broadcast_to(x.shape[0], 3, *x.shape[2:])
         return super().forward(x)
+    
+class CifarCNN(DecoupledModel):
+    def __init__(self, dataset, pretrained, num_endpoints=1, seed=42, bias=True):
+        super(CifarCNN, self).__init__()
+        self.base = nn.Sequential(
+            OrderedDict(
+                conv1=StandardConv(in_channels=INPUT_CHANNELS[dataset], out_channels=16, kernel_size=5, padding=0, stride=1, bias=bias).seed(seed),
+                activation1=nn.LeakyReLU(),
+                pool1=nn.MaxPool2d(2, 2),
+                conv2=StandardConv(in_channels=16, out_channels=32, kernel_size=5, padding=1, stride=1, bias=bias).seed(seed),
+                activation2=nn.LeakyReLU(),
+                pool2=nn.MaxPool2d(2, 2),
+                conv3=StandardConv(in_channels=32, out_channels=64, kernel_size=3, padding=1, stride=1, bias=bias).seed(seed),
+                activation3=nn.LeakyReLU(),
+                pool3=nn.MaxPool2d(2, 2),
+                flatten=nn.Flatten(),
+                fc1= StandardLinear(in_features=64 * 3 * 3, out_features=128, bias=bias).seed(seed),
+                activation4=nn.LeakyReLU(),
+            )
+        )
+        self.classifier = StandardLinear(in_features=128, out_features=NUM_CLASSES[dataset], bias=bias).seed(seed)
 
 
 class EfficientNet(DecoupledModel):
@@ -456,6 +530,7 @@ MODELS = {
     "avgcnn": FedAvgCNN,
     "alex": AlexNet,
     "2nn": TwoNN,
+    "cifarcnn": CifarCNN,
     "squeeze0": partial(SqueezeNet, version="0"),
     "squeeze1": partial(SqueezeNet, version="1"),
     "res18": partial(ResNet, version="18"),

@@ -10,9 +10,11 @@ dataset:
   # medmnistA, medmnistC, covid19, celeba, synthetic, svhn,
   # tiny_imagenet, cinic10, domain]
   name: cifar10
+  split: Dirichlet
+  split_arg: 0.3
 
 model:
-  name: lenet5
+  name: cifarcnn
 
   # Whether to use torchvision integrated model weights.
   # Has no effect if model is lenet5, 2nn or fedavgcnn
@@ -45,10 +47,10 @@ lr_scheduler:
 # The optimizer that used for client local training.
 optimizer:
   name: sgd # [sgd, adam, adamw, rmsprop, adagrad]
-  lr: 0.01
+  lr: 0.02
   dampening: 0 # for SGD
-  weight_decay: 0
-  momentum: 0 # for [SGD, RMSprop]
+  weight_decay: 0.0005
+  momentum: 0.5 # for [SGD, RMSprop]
   alpha: 0.99 # for RMSprop
   nesterov: false # for SGD
   betas: [0.9, 0.999] # for [Adam, AdamW]
@@ -80,8 +82,9 @@ common:
   global_epoch: 100 # Number of global epochs, also called communication round.
   local_epoch: 5 # Number if epochs of client local training.
   finetune_epoch: 0 # Number of epochs of clients fine-tunning their models before test.
-  batch_size: 32 # Data batch size for client local training.
+  batch_size: 50 # Data batch size for client local training.
   test_interval: 10 # Interval round of performing test on all test clients.
+  client_num: 100
 
   # The ratio of stragglers (set in [0, 1]).
   # Stragglers would not perform full-epoch local training as normal clients.
@@ -93,12 +96,12 @@ common:
   # global (default): buffers will be aggregated like other model parameters.
   # local: clients' buffers are isolated.
   # drop: clients will drop their buffers after training done.
-  buffers: global # [local, global, drop]
+  buffers: local # [local, global, drop]
 
   # Set eval_<...> as true for performing evaluation on <...>sets held by
   # this round's joined clients before and after local training.
   eval_test: true
-  eval_val: false
+  eval_val: true
   eval_train: true
 
   verbose_gap: 10 # Interval round of displaying clients training performance on terminal.
@@ -113,6 +116,7 @@ common:
   # Whether to delete output files after user press `Ctrl + C`,
   # which indicates that the run is removable.
   delete_useless_run: true
+
 
 # You can set specific arguments for advanced FL methods also.
 # FL-bench uses FL method arguments by args.<method>.<arg>.

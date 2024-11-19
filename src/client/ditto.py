@@ -30,7 +30,7 @@ class DittoClient(FedAvgClient):
 
     def fit(self):
         self.model.train()
-        self.dataset.train()
+        self.train_dataset.train()
         for _ in range(self.local_epoch):
             for x, y in self.trainloader:
                 if len(x) <= 1:

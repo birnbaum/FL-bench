@@ -1,22 +1,24 @@
 from collections import OrderedDict
 from copy import deepcopy
 from typing import Any
-
+import torch
 from src.client.fedavg import FedAvgClient
+from src.utils.tools import evaluate_model
+from src.utils.constants import NUM_CLASSES
 
 
 class FlocoClient(FedAvgClient):
     def __init__(self, **commons):
         super().__init__(**commons)
         self.pers_model = deepcopy(self.model).to(self.device)
+        print(f'Floco self.pers_model - {self.pers_model}')
         self.optimizer.add_param_group({"params": self.pers_model.parameters()})
         self.init_optimizer_state = deepcopy(self.optimizer.state_dict())
 
     def set_parameters(self, package: dict[str, Any]):
         super().set_parameters(package)
-        if package["subregion_parameters"]:
-            self.model.sample_from = package["sample_from"]
-            self.model.subregion_parameters = package["subregion_parameters"]
+        self.model.sample_from = package["sample_from"]
+        self.model.subregion_parameters = package["subregion_parameters"]
         self.global_params = OrderedDict(
             (key, param.to(self.device))
             for key, param in package["regular_model_params"].items()
@@ -35,7 +37,7 @@ class FlocoClient(FedAvgClient):
 
     def fit(self):
         common_params = dict(
-            dataset=self.dataset,
+            dataset=self.train_dataset,
             dataloader=self.trainloader,
             optimizer=self.optimizer,
             criterion=self.criterion,
@@ -53,7 +55,13 @@ class FlocoClient(FedAvgClient):
                 lamda=self.args.floco.lamda,
                 **common_params
             )
-
+    @torch.no_grad()
+    def evaluate(self):
+        if self.args.floco.pers_epoch > 0:
+            return super().evaluate(self.pers_model)
+        else:
+            return super().evaluate()
+    
 
 def training_loop(
     model,
@@ -73,8 +81,9 @@ def training_loop(
         for x, y in dataloader:
             x, y = x.to(device), y.to(device)
             logit = model(x)
-            optimizer.zero_grad()  # TODO switched
             loss = criterion(logit, y)  # TODO switched
+            optimizer.zero_grad()  # TODO switched
+            loss.backward()
             if reg_model_params is not None:  # TODO what is this?
                 for pers_param, global_param in zip(
                     model.parameters(), reg_model_params
@@ -86,7 +95,6 @@ def training_loop(
                             )
                         except:
                             pass
-            loss.backward()
             optimizer.step()
         if lr_scheduler is not None:
             lr_scheduler.step()

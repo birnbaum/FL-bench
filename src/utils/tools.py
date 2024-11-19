@@ -12,6 +12,7 @@ import torch
 from omegaconf import DictConfig
 from rich.console import Console
 from torch.utils.data import DataLoader
+from torchmetrics import CalibrationError
 
 from src.utils.constants import DEFAULTS
 from src.utils.metrics import Metrics
@@ -91,8 +92,8 @@ def vectorize(
 def evaluate_model(
     model: torch.nn.Module,
     dataloader: DataLoader,
-    criterion=torch.nn.CrossEntropyLoss(reduction="sum"),
-    device=torch.device("cpu"),
+    num_classes: int,
+    device=torch.device("cpu")
 ) -> Metrics:
     """For evaluating the `model` over `dataloader` and return metrics.
 
@@ -107,15 +108,38 @@ def evaluate_model(
     """
     model.eval()
     model.to(device)
-    metrics = Metrics()
-    for x, y in dataloader:
-        x, y = x.to(device), y.to(device)
-        logits = model(x)
-        loss = criterion(logits, y).item()
-        pred = torch.argmax(logits, -1)
-        metrics.update(Metrics(loss, pred, y))
-    return metrics
-
+    ece_fn = CalibrationError(task="multiclass", num_classes=num_classes)
+    accumulated_loss = 0.0
+    correct_samples = 0
+    all_targets = []
+    pred_vectors = []
+    label_vectors = []
+    # count predictions for each class
+    correct_pred = {classname: 0 for classname in range(num_classes)}
+    total_pred = {classname: 0 for classname in range(num_classes)}
+    with torch.no_grad():
+        for batch in dataloader:
+            data, target = batch
+            data, target = data.to(device), target.flatten().to(device) 
+            all_targets.append(target.cpu())
+            output = model(data)
+            accumulated_loss += torch.nn.CrossEntropyLoss()(output, target).item()
+            # get the index of the max log-probability
+            pred = output.argmax(dim=1)
+            correct_samples += torch.sum(pred == target).item()
+            pred_vectors.append(torch.softmax(output, dim=1).detach().cpu())
+            label_vectors.append(target.detach().cpu())
+            # Get single class accs
+            for label, prediction in zip(target, pred):
+                if label == prediction:
+                    correct_pred[range(num_classes)[label]] += 1
+                total_pred[range(num_classes)[label]] += 1
+    test_loss = accumulated_loss / len(dataloader)
+    test_acc = correct_samples / len(dataloader.dataset)
+    pred_vector = torch.cat(pred_vectors)
+    label_vector = torch.cat(label_vectors)
+    test_ece = ece_fn(pred_vector, label_vector)
+    return float(test_acc), float(test_loss), float(test_ece)
 
 def parse_args(
     config: DictConfig,

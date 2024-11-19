@@ -2,16 +2,15 @@ import functools
 import inspect
 import json
 import os
+import copy
 import pickle
 import random
-import shutil
 import time
-import traceback
 import warnings
 from collections import OrderedDict
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 import numpy as np
 import ray
@@ -19,7 +18,7 @@ import torch
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
 from rich.console import Console
-from rich.pretty import pprint as rich_pprint
+from rich.json import JSON
 from rich.progress import track
 from torchvision import transforms
 
@@ -68,7 +67,23 @@ class FedAvgServer:
 
         fix_random_seed(self.args.common.seed, use_cuda=self.device.type == "cuda")
 
-        self.output_dir = Path(HydraConfig.get().runtime.output_dir)
+        self.output_dir = HydraConfig.get().runtime.output_dir
+        if self.args.dataset.name not in ['femnist']:
+            self.output_dir += f"/{self.args.dataset.split}_{self.args.dataset.split_arg}"
+        self.output_dir += f"/{self.algorithm_name}"
+        if self.algorithm_name == "FedAvg":
+            self.output_dir += f"_fe_{self.args.common.finetune_epoch}"
+        if self.algorithm_name == 'Ditto':
+            self.output_dir += f"_l_{self.args.ditto.lamda}_fe_{self.args.ditto.pers_epoch}"
+        if self.algorithm_name == 'FedRoD':
+            self.output_dir += f"_fe_{self.args.fedrod.pers_epoch}"
+        if self.algorithm_name == "Floco":
+            self.output_dir += f"_np_{self.args.floco.endpoints}_tau_{self.args.floco.tau}_r_{self.args.floco.rho}_fe_{self.args.floco.pers_epoch}"
+        self.output_dir += f"_s_{self.args.common.seed}/"
+        self.output_dir = Path(self.output_dir)
+        
+
+        # self.output_dir = Path(HydraConfig.get().runtime.output_dir)
         with open(
             FLBENCH_ROOT / "data" / self.args.dataset.name / "args.json", "r"
         ) as f:
@@ -83,16 +98,31 @@ class FedAvgServer:
                 partition = pickle.load(f)
         except:
             raise FileNotFoundError(f"Please partition {self.args.dataset.name} first.")
-        self.train_clients: list[int] = partition["separation"]["train"]
-        self.test_clients: list[int] = partition["separation"]["test"]
-        self.val_clients: list[int] = partition["separation"]["val"]
-        self.client_num: int = partition["separation"]["total"]
+
+        self.client_num: int = self.args.common.client_num
+        # For LEAF dataset sample client_num random clients
+        if self.args.dataset.name in ['femnist']:
+            permuted_client_list = np.random.default_rng(
+                seed=self.args.common.seed).permutation(np.arange(partition["separation"]["total"]))[:self.client_num]
+            sampled_train_clients = list(np.array(partition["separation"]["train"])[permuted_client_list])
+            self.client_id_mapping = { 
+                i: sampled_train_clients[i] for i in range(self.client_num)
+            }
+            self.train_clients, self.val_clients, self.test_clients = list(range(self.client_num)), list(range(self.client_num)), list(range(self.client_num))
+        # For the other datasets the client num is determined at dataset generation
+        else:
+            self.client_id_mapping = {}
+            self.train_clients: list[int] = list(np.array(partition["separation"]["train"]))
+            self.test_clients: list[int] = list(np.array(partition["separation"]["test"]))
+            self.val_clients: list[int] = list(np.array(partition["separation"]["val"]))
 
         # init model(s) parameters
         self.model: DecoupledModel = MODELS[self.args.model.name](
             dataset=self.args.dataset.name,
             pretrained=self.args.model.use_torchvision_pretrained_weights,
         )
+        print(f'FedAvg server model: {self.model}')
+
         self.model.check_and_preprocess(self.args)
 
         _init_global_params, _init_global_params_name = [], []
@@ -235,21 +265,26 @@ class FedAvgServer:
                 num_workers=0,
                 init_args=dict(
                     model=deepcopy(self.model),
-                    optimizer_cls=self.get_client_optimizer_cls(),
-                    lr_scheduler_cls=self.get_client_lr_scheduler_cls(),
+                    optimizer_cls=self.get_client_optimizer(),
+                    lr_scheduler_cls=self.get_client_lr_scheduler(),
                     args=self.args,
-                    dataset=self.get_dataset(),
+                    train_dataset=self.get_dataset()[0],
+                    test_dataset=self.get_dataset()[1],
                     data_indices=self.get_clients_data_indices(),
                     device=self.device,
                     return_diff=self.return_diff,
+                    train_clients=self.train_clients,
+                    true_train_clients = self.train_clients,
+                    client_id_mapping=self.client_id_mapping
                     **extras,
                 ),
             )
         else:
             model_ref = ray.put(self.model.cpu())
-            optimzier_cls_ref = ray.put(self.get_client_optimizer_cls())
-            lr_scheduler_cls_ref = ray.put(self.get_client_lr_scheduler_cls())
-            dataset_ref = ray.put(self.get_dataset())
+            optimzier_cls_ref = ray.put(self.get_client_optimizer())
+            lr_scheduler_cls_ref = ray.put(self.get_client_lr_scheduler())
+            train_dataset_ref = ray.put(self.get_dataset()[0])
+            test_dataset_ref = ray.put(self.get_dataset()[1])
             data_indices_ref = ray.put(self.get_clients_data_indices())
             args_ref = ray.put(self.args)
             device_ref = ray.put(None)  # in parallel mode, workers decide their device
@@ -264,10 +299,14 @@ class FedAvgServer:
                     optimizer_cls=optimzier_cls_ref,
                     lr_scheduler_cls=lr_scheduler_cls_ref,
                     args=args_ref,
-                    dataset=dataset_ref,
+                    train_dataset=train_dataset_ref,
+                    test_dataset=test_dataset_ref,
                     data_indices=data_indices_ref,
                     device=device_ref,
                     return_diff=return_diff_ref,
+                    train_clients=self.train_clients,
+                    true_train_clients = self.train_clients,
+                    client_id_mapping=self.client_id_mapping,
                     **{key: ray.put(value) for key, value in extras.items()},
                 ),
             )
@@ -286,12 +325,14 @@ class FedAvgServer:
         """
         try:
             partition_path = (
-                FLBENCH_ROOT / "data" / self.args.dataset.name / "partition.pkl"
-            )
+                    FLBENCH_ROOT / "data" / self.args.dataset.name / "partition.pkl"
+                )
             with open(partition_path, "rb") as f:
                 partition = pickle.load(f)
         except:
-            raise FileNotFoundError(f"Please partition {self.args.dataset.name} first.")
+            raise FileNotFoundError(
+                f"Please partition {self.args.dataset.name} first."
+            )
 
         # [0: {"train": [...], "val": [...], "test": [...]}, ...]
         data_indices: list[dict[str, list[int]]] = partition["data_indices"]
@@ -305,13 +346,19 @@ class FedAvgServer:
         BaseDataset: This is the loaded dataset instance,
         which inherits from the BaseDataset class.
         """
-        dataset: BaseDataset = DATASETS[self.args.dataset.name](
+        train_dataset: BaseDataset = DATASETS[self.args.dataset.name](
             root=FLBENCH_ROOT / "data" / self.args.dataset.name,
             args=self.args.dataset,
+            train=True,
             **self.get_dataset_transforms(),
         )
-
-        return dataset
+        test_dataset: BaseDataset = DATASETS[self.args.dataset.name](
+            root=FLBENCH_ROOT / "data" / self.args.dataset.name,
+            args=self.args.dataset,
+            train=False,
+            **self.get_dataset_transforms(),
+        )
+        return train_dataset, test_dataset
 
     def get_dataset_transforms(self):
         """Define data preprocessing schemes. These schemes will work for every
@@ -326,9 +373,10 @@ class FedAvgServer:
                 `test_target_transform`: The transform for testing targets.
         """
         test_data_transform = transforms.Compose(
-            [
+            [   
                 transforms.Normalize(
-                    DATA_MEAN[self.args.dataset.name], DATA_STD[self.args.dataset.name]
+                    DATA_MEAN[self.args.dataset.name],
+                    DATA_STD[self.args.dataset.name],
                 )
             ]
             if self.args.dataset.name in DATA_MEAN
@@ -339,7 +387,8 @@ class FedAvgServer:
         train_data_transform = transforms.Compose(
             [
                 transforms.Normalize(
-                    DATA_MEAN[self.args.dataset.name], DATA_STD[self.args.dataset.name]
+                    DATA_MEAN[self.args.dataset.name],
+                    DATA_STD[self.args.dataset.name],
                 )
             ]
             if self.args.dataset.name in DATA_MEAN
@@ -347,6 +396,7 @@ class FedAvgServer:
             else []
         )
         train_target_transform = transforms.Compose([])
+
         return dict(
             train_data_transform=train_data_transform,
             train_target_transform=train_target_transform,
@@ -354,7 +404,8 @@ class FedAvgServer:
             test_target_transform=test_target_transform,
         )
 
-    def get_client_optimizer_cls(self) -> type[torch.optim.Optimizer]:
+
+    def get_client_optimizer(self):
         """Get client-side model training optimizer.
 
         Returns:
@@ -374,20 +425,12 @@ class FedAvgServer:
         self.args.optimizer = DictConfig(args_valid)
         return optimizer_cls
 
-    def get_client_lr_scheduler_cls(
-        self,
-    ) -> Union[type[torch.optim.lr_scheduler.LRScheduler], None]:
-        """Get the client-side learning rate scheduler class. Return None if
-        lr_scheduler.name is NOne or no lr_scheduler arguement is provided.
-
-        Returns:
-            None or a partial initiated lr_scheduler class that client only need to add `optimizer` arg.
-        """
-        if hasattr(self.args, "lr_scheduler"):
+    def get_client_lr_scheduler(self):
+        if hasattr(self.args.common, "lr_scheduler"):
             if self.args.lr_scheduler.name is None:
                 del self.args.lr_scheduler
                 return None
-            lr_scheduler_args = getattr(self.args, "lr_scheduler")
+            lr_scheduler_args = getattr(self.args.common, "lr_scheduler")
             if lr_scheduler_args.name is not None:
                 target_scheduler_cls: type[torch.optim.lr_scheduler.LRScheduler] = (
                     LR_SCHEDULERS[lr_scheduler_args.name]
@@ -397,7 +440,7 @@ class FedAvgServer:
                 ).args
 
                 args_valid = {}
-                for key, value in self.args.lr_scheduler.items():
+                for key, value in vars(self.args.lr_scheduler).items():
                     if key in keys_required:
                         args_valid[key] = value
 
@@ -421,13 +464,12 @@ class FedAvgServer:
             begin = time.time()
             self.train_one_round()
             end = time.time()
-            self.log_info()
             avg_round_time = (avg_round_time * self.current_epoch + (end - begin)) / (
                 self.current_epoch + 1
             )
-
             if (E + 1) % self.args.common.test_interval == 0:
                 self.test()
+            self.log_info()
 
         self.logger.log(
             f"{self.algorithm_name}'s average time taken by each global epoch: "
@@ -473,30 +515,19 @@ class FedAvgServer:
         )
 
     def test(self):
-        """The function for testing FL method's output (a single global model
-        or personalized client models)."""
+        """The function for testing FL method's output (a single global model or personalized client models)."""
         self.testing = True
-        clients = list(set(self.val_clients + self.test_clients))
+        # Test all clients always
+        clients = self.train_clients
         template = {
-            "before": {"train": Metrics(), "val": Metrics(), "test": Metrics()},
-            "after": {"train": Metrics(), "val": Metrics(), "test": Metrics()},
-        }
+                "before": {"train": {"acc": [], "loss": [], "ece": []}, "val": {"acc": [], "loss": [], "ece": []}, "test": {"acc": [], "loss": [], "ece": []}},
+                "after": {"train": {"acc": [], "loss": [], "ece": []}, "val": {"acc": [], "loss": [], "ece": []}, "test": {"acc": [], "loss": [], "ece": []}},
+            }
         if len(clients) > 0:
-            if self.val_clients == self.train_clients == self.test_clients:
-                results = {"all_clients": template}
-                self.trainer.test(clients, results["all_clients"])
-            else:
-                results = {
-                    "val_clients": deepcopy(template),
-                    "test_clients": deepcopy(template),
-                }
-                if len(self.val_clients) > 0:
-                    self.trainer.test(self.val_clients, results["val_clients"])
-                if len(self.test_clients) > 0:
-                    self.trainer.test(self.test_clients, results["test_clients"])
-
-            self.test_results[self.current_epoch + 1] = results
-
+            results = {"all_clients": template}
+            self.trainer.test(clients, results["all_clients"])
+            self.test_results[self.current_epoch] = results
+        
         self.testing = False
 
     def get_client_model_params(self, client_id: int) -> OrderedDict[str, torch.Tensor]:
@@ -536,6 +567,7 @@ class FedAvgServer:
         """
         client_weights = [package["weight"] for package in client_packages.values()]
         weights = torch.tensor(client_weights) / sum(client_weights)
+
         if self.return_diff:  # inputs are model params diff
             for name, global_param in self.public_model_params.items():
                 diffs = torch.stack(
@@ -557,7 +589,6 @@ class FedAvgServer:
                     dim=-1,
                 )
                 aggregated = torch.sum(client_params * weights, dim=-1)
-
                 global_param.data = aggregated
 
     def show_convergence(self):
@@ -598,42 +629,80 @@ class FedAvgServer:
 
     def log_info(self):
         """Accumulate client evaluation results at each round."""
-        for stage in ["before", "after"]:
-            for split, flag in [
-                ("train", self.args.common.eval_train),
-                ("val", self.args.common.eval_val),
-                ("test", self.args.common.eval_test),
-            ]:
-                if flag:
-                    global_metrics = Metrics()
-                    for i in self.selected_clients:
-                        global_metrics.update(
-                            self.client_metrics[i][self.current_epoch][stage][split]
-                        )
+        if (self.current_epoch + 1) % self.args.common.test_interval == 0:
+            if np.sum(self.test_results[self.current_epoch]["all_clients"]["after"]["val"]["acc"]) != 0.0:
+                finetune_epoch_flag = "after"
+            else:
+                finetune_epoch_flag = "before"
 
-                    self.global_metrics[stage][split].append(global_metrics)
+            # Personalized model metrics
 
-                    if self.args.common.monitor == "visdom":
-                        self.viz.line(
-                            [global_metrics.accuracy],
-                            [self.current_epoch],
-                            win=f"Accuracy-{self.monitor_window_name_suffix}/{split}set-{stage}LocalTraining",
-                            update="append",
-                            name=self.algorithm_name,
-                            opts=dict(
-                                title=f"Accuracy-{self.monitor_window_name_suffix}/{split}set-{stage}LocalTraining",
-                                xlabel="Communication Rounds",
-                                ylabel="Accuracy",
-                                legend=[self.algorithm_name],
-                            ),
-                        )
-                    elif self.args.common.monitor == "tensorboard":
-                        self.tensorboard.add_scalar(
-                            f"Accuracy-{self.monitor_window_name_suffix}/{split}set-{stage}LocalTraining",
-                            global_metrics.accuracy,
-                            self.current_epoch,
-                            new_style=True,
-                        )
+            self.tensorboard.add_scalar(
+                "avg_train_acc",
+                np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["train"]["acc"]),
+                self.current_epoch + 1,
+                new_style=True,
+            )
+            self.tensorboard.add_scalar(
+                "avg_train_ece",
+                np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["train"]["ece"]),
+                self.current_epoch + 1,
+                new_style=True,
+            )
+            self.tensorboard.add_scalar(
+                "avg_train_loss",
+                np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["train"]["loss"]),
+                self.current_epoch + 1,
+                new_style=True,
+            )
+
+            self.tensorboard.add_scalar(
+                "avg_val_acc",
+                np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["val"]["acc"]),
+                self.current_epoch + 1,
+                new_style=True,
+            )
+            self.tensorboard.add_scalar(
+                "avg_val_ece",
+                np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["val"]["ece"]),
+                self.current_epoch + 1,
+                new_style=True,
+            )
+            self.tensorboard.add_scalar(
+                "avg_val_loss",
+                np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["val"]["loss"]),
+                self.current_epoch + 1,
+                new_style=True,
+            )
+
+            # Personalized model metrics
+            for clid, cl_val_acc in enumerate(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["val"]["acc"]):
+                self.tensorboard.add_scalar(
+                    f"clients_stats/val_acc_cl_{clid}",
+                    cl_val_acc,
+                    self.current_epoch + 1,
+                    new_style=True,
+                )
+
+            # Global model metrics
+            self.tensorboard.add_scalar(
+                "test/center_acc",
+                self.test_results[self.current_epoch]["all_clients"]["before"]["test"]["acc"][-1],
+                self.current_epoch + 1,
+                new_style=True,
+            )
+            self.tensorboard.add_scalar(
+                "test/center_ece",
+                self.test_results[self.current_epoch]["all_clients"]["before"]["test"]["ece"][-1],
+                self.current_epoch + 1,
+                new_style=True,
+            )
+            self.tensorboard.add_scalar(
+                "test/center_loss",
+                self.test_results[self.current_epoch]["all_clients"]["before"]["test"]["loss"][-1],
+                self.current_epoch + 1,
+                new_style=True,
+            )
 
     def show_max_metrics(self):
         """Show the maximum stats that FL method get."""
@@ -688,36 +757,26 @@ class FedAvgServer:
         """
         self.logger.log("=" * 20, self.algorithm_name, "=" * 20)
         self.logger.log("Experiment Arguments:")
-        rich_pprint(
-            OmegaConf.to_object(self.args), console=self.logger.stdout, expand_all=True
-        )
-        if self.args.common.save_log:
-            rich_pprint(
-                OmegaConf.to_object(self.args),
-                console=self.logger.logfile_logger,
-                expand_all=True,
-            )
+        self.logger.log(JSON(json.dumps(OmegaConf.to_object(self.args))))
         if self.args.common.monitor == "tensorboard":
             self.tensorboard.add_text(
                 f"ExperimentalArguments-{self.monitor_window_name_suffix}",
-                f"{json.dumps(OmegaConf.to_object(self.args), indent=4)}",
+                f"<pre>{self.args}</pre>",
             )
- 
+
         begin = time.time()
         try:
             self.train()
         except KeyboardInterrupt:
-            # when user manually terminates the run, FL-bench
-            # indicates that run should be considered as useless and deleted.
+            # when user press Ctrl+C
+            # indicates that this run should be considered as useless and deleted.
             self.logger.close()
             del self.train_progress_bar
             if self.args.common.delete_useless_run:
                 if os.path.isdir(self.output_dir):
-                    shutil.rmtree(self.output_dir)
+                    os.removedirs(self.output_dir)
                 return
-        except Exception as e:
-            self.logger.log(traceback.format_exc())
-            self.logger.log(f"Exception occurred: {e}")
+        except:
             self.logger.close()
             del self.train_progress_bar
             raise
@@ -733,97 +792,12 @@ class FedAvgServer:
             "Format: [green](before local fine-tuning) -> [blue](after local fine-tuning)\n",
             "So if finetune_epoch = 0, x.xx% -> 0.00% is normal.",
         )
-        all_test_results = {
-            epoch: {
-                group: {
-                    split: {
-                        "loss": f"{metrics['before'][split].loss:.4f} -> {metrics['after'][split].loss:.4f}",
-                        "accuracy": f"{metrics['before'][split].accuracy:.2f}% -> {metrics['after'][split].accuracy:.2f}%",
-                    }
-                    for split, flag in [
-                        ("train", self.args.common.eval_train),
-                        ("val", self.args.common.eval_val),
-                        ("test", self.args.common.eval_test),
-                    ]
-                    if flag
-                }
-                for group, metrics in results.items()
-            }
-            for epoch, results in self.test_results.items()
-        }
-
-        self.logger.log(json.dumps(all_test_results, indent=4))
-        if self.args.common.monitor == "tensorboard":
-            for epoch, results in all_test_results.items():
-                self.tensorboard.add_text(
-                    f"Results-{self.monitor_window_name_suffix}",
-                    text_string=f"<pre>{results}</pre>",
-                    global_step=epoch,
-                )
-
-        self.show_convergence()
-        self.show_max_metrics()
 
         self.logger.close()
 
-        # plot the training curves
-        if self.args.common.save_fig:
-            import matplotlib
-            from matplotlib import pyplot as plt
-
-            matplotlib.use("Agg")
-            linestyle = {
-                "before": {"train": "dotted", "val": "dashed", "test": "solid"},
-                "after": {"train": "dotted", "val": "dashed", "test": "solid"},
-            }
-            for stage in ["before", "after"]:
-                for split in ["train", "val", "test"]:
-                    if len(self.global_metrics[stage][split]) > 0:
-                        plt.plot(
-                            [
-                                metrics.accuracy
-                                for metrics in self.global_metrics[stage][split]
-                            ],
-                            label=f"{split}set ({stage}LocalTraining)",
-                            ls=linestyle[stage][split],
-                        )
-
-            plt.title(f"{self.algorithm_name}_{self.args.dataset.name}")
-            plt.ylim(0, 100)
-            plt.xlabel("Communication Rounds")
-            plt.ylabel("Accuracy")
-            plt.legend()
-            plt.savefig(self.output_dir / f"metrics.png", bbox_inches="tight")
-
-        # save each round's metrics stats
-        if self.args.common.save_metrics:
-            import pandas as pd
-
-            df = pd.DataFrame()
-            for stage in ["before", "after"]:
-                for split in ["train", "val", "test"]:
-                    if len(self.global_metrics[stage][split]) > 0:
-                        for metric in [
-                            "accuracy",
-                            # "micro_precision",
-                            # "macro_precision",
-                            # "micro_recall",
-                            # "macro_recall",
-                        ]:
-                            stats = [
-                                getattr(metrics, metric)
-                                for metrics in self.global_metrics[stage][split]
-                            ]
-                            df.insert(
-                                loc=df.shape[1],
-                                column=f"{metric}_{split}_{stage}",
-                                value=np.array(stats).T,
-                            )
-            df.to_csv(self.output_dir / f"metrics.csv", index=True, index_label="epoch")
-
         # save trained model(s) parameters
         if self.args.common.save_model:
-            model_name = f"{self.args.dataset.name}_{self.args.common.global_epoch}_{self.args.model}.pt"
+            model_name = f"{self.args.dataset.name}_{self.args.common.global_epoch}_{self.args.model.name}.pt"
             if not self.unique_model:
                 torch.save(self.public_model_params, self.output_dir / model_name)
             else:

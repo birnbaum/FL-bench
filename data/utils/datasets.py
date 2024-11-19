@@ -3,7 +3,7 @@ import os
 import pickle
 from argparse import Namespace
 from pathlib import Path
-from typing import Dict, List, Optional, Type
+from typing import Dict, Type
 
 import numpy as np
 import pandas as pd
@@ -17,33 +17,16 @@ from torchvision.io.image import ImageReadMode, read_image
 
 
 class BaseDataset(Dataset):
-    def __init__(
-        self,
-        data: torch.Tensor,
-        targets: torch.Tensor,
-        classes: List[int],
-        train_data_transform: Optional[transforms.Compose] = None,
-        train_target_transform: Optional[transforms.Compose] = None,
-        test_data_transform: Optional[transforms.Compose] = None,
-        test_target_transform: Optional[transforms.Compose] = None,
-    ) -> None:
-        self.data = data
-        self.targets = targets
-        self.classes = classes
-        self.train_data_transform = train_data_transform
-        self.train_target_transform = train_target_transform
-        self.test_data_transform = test_data_transform
-        self.test_target_transform = test_target_transform
-        self.data_transform: Optional[transforms.Compose] = None
-        self.target_transform: Optional[transforms.Compose] = None
-
-        # rescale data to fit in [0, 1.0] if needed
-        self._rescale_data()
-
-    def _rescale_data(self):
-        max_val = self.data.max()
-        if max_val > 1.0:
-            self.data /= 255.0
+    def __init__(self) -> None:
+        self.classes: list = None
+        self.data: torch.Tensor = None
+        self.targets: torch.Tensor = None
+        self.train_data_transform = None
+        self.train_target_transform = None
+        self.test_data_transform = None
+        self.test_target_transform = None
+        self.data_transform = None
+        self.target_transform = None
 
     def __getitem__(self, index):
         data, targets = self.data[index], self.targets[index]
@@ -51,7 +34,6 @@ class BaseDataset(Dataset):
             data = self.data_transform(data)
         if self.target_transform is not None:
             targets = self.target_transform(targets)
-
         return data, targets
 
     def train(self):
@@ -75,7 +57,9 @@ class FEMNIST(BaseDataset):
         test_target_transform=None,
         train_data_transform=None,
         train_target_transform=None,
+        train=True
     ) -> None:
+        super().__init__()
         if not isinstance(root, Path):
             root = Path(root)
         if not os.path.isfile(root / "data.npy") or not os.path.isfile(
@@ -88,15 +72,13 @@ class FEMNIST(BaseDataset):
         data = np.load(root / "data.npy")
         targets = np.load(root / "targets.npy")
 
-        super().__init__(
-            data=torch.from_numpy(data).float().reshape(-1, 1, 28, 28),
-            targets=torch.from_numpy(targets).long(),
-            classes=list(range(62)),
-            test_data_transform=test_data_transform,
-            test_target_transform=test_target_transform,
-            train_data_transform=train_data_transform,
-            train_target_transform=train_target_transform,
-        )
+        self.data = torch.from_numpy(data).float().reshape(-1, 1, 28, 28)
+        self.targets = torch.from_numpy(targets).long()
+        self.classes = list(range(62))
+        self.test_data_transform = test_data_transform
+        self.test_target_transform = test_target_transform
+        self.train_data_transform = train_data_transform
+        self.train_target_transform = train_target_transform
 
 
 class Synthetic(BaseDataset):
@@ -366,23 +348,26 @@ class CIFAR10(BaseDataset):
         test_target_transform=None,
         train_data_transform=None,
         train_target_transform=None,
+        train=True
     ):
+        super().__init__()
         train_part = torchvision.datasets.CIFAR10(root, True, download=True)
         test_part = torchvision.datasets.CIFAR10(root, False, download=True)
-        train_data = torch.Tensor(train_part.data).permute([0, -1, 1, 2]).float()
-        test_data = torch.Tensor(test_part.data).permute([0, -1, 1, 2]).float()
+        train_data = torch.Tensor(train_part.data).permute([0, -1, 1, 2]).float() / 255.
+        test_data = torch.Tensor(test_part.data).permute([0, -1, 1, 2]).float() / 255.
         train_targets = torch.Tensor(train_part.targets).long().squeeze()
         test_targets = torch.Tensor(test_part.targets).long().squeeze()
-
-        super().__init__(
-            data=torch.cat([train_data, test_data]),
-            targets=torch.cat([train_targets, test_targets]),
-            classes=list(range(10)),
-            test_data_transform=test_data_transform,
-            test_target_transform=test_target_transform,
-            train_data_transform=train_data_transform,
-            train_target_transform=train_target_transform,
-        )
+        if train:
+            self.data = train_data
+            self.targets = train_targets
+        else:
+            self.data = test_data
+            self.targets = test_targets
+        self.classes = list(range(10))
+        self.test_data_transform = test_data_transform
+        self.test_target_transform = test_target_transform
+        self.train_data_transform = train_data_transform
+        self.train_target_transform = train_target_transform
 
 
 class CIFAR100(BaseDataset):

@@ -17,7 +17,11 @@ class MODE(Enum):
 
 DEFAULTS = {
     "method": "fedavg",
-    "dataset": {"name": "mnist"},
+    "dataset": {
+        "name": "mnist",
+        "split": "Dirichlet",
+        "split_arg": 0.3
+        },
     "model": {
         "name": "lenet5",
         "use_torchvision_pretrained_weights": True,
@@ -64,6 +68,7 @@ DEFAULTS = {
         "global_epoch": 100,
         "local_epoch": 5,
         "finetune_epoch": 0,
+        "client_num": 100,
         "batch_size": 32,
         "test_interval": 100,
         "straggler_ratio": 0,

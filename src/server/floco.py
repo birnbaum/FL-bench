@@ -1,3 +1,4 @@
+import sys
 from argparse import ArgumentParser
 from copy import deepcopy
 from typing import Union, Literal
@@ -19,11 +20,9 @@ class FlocoServer(FedAvgServer):
     @staticmethod
     def get_hyperparams(args_list=None) -> Namespace:
         parser = ArgumentParser()
-        parser.add_argument("--num_endpoints", type=int, default=1)  # TODO improve terminology
+        parser.add_argument("--endpoints", type=int, default=1)  # TODO improve terminology
         parser.add_argument("--tau", type=int, default=100)  # TODO improve terminology
         parser.add_argument("--rho", type=float, default=0.1)  # TODO improve terminology
-        parser.add_argument("--finetune_region", type=str, default='simplex_center')
-        parser.add_argument("--evaluate_region", type=str, default='simplex_center')
 
         # Floco+ (only used if pers_epoch > 0)
         parser.add_argument("--pers_epoch", type=int, default=0)
@@ -37,13 +36,14 @@ class FlocoServer(FedAvgServer):
         algorithm_name: str = "Floco",
         unique_model=False,
         use_fedavg_client_cls=True,
-        return_diff=False,
+        return_diff=True,
     ):
         super().__init__(
             args, algorithm_name, unique_model, use_fedavg_client_cls, return_diff
         )
         self.model = SimplexModel(self.args)
         self.model.check_and_preprocess(self.args)
+        print(f'Floco server model: {self.model}')
         self.init_trainer(FlocoClient)
         self.projected_clients = None
 
@@ -80,7 +80,7 @@ class FlocoServer(FedAvgServer):
             server_package["subregion_parameters"] = None
         else:
             server_package["sample_from"] = (
-                "subregion_center" if self.testing else "region_uniform"
+                "subregion_center" if self.testing else "subregion_uniform"
             )
             server_package["subregion_parameters"] = (
                 self.projected_clients[client_id],
@@ -109,13 +109,19 @@ class SimplexModel(DecoupledModel):
             bias=True,
             seed=self.args.common.seed,
         )
-        self.sample_from = "simplex_center"
+        self.sample_from = "simplex_uniform"
         self.subregion_parameters = None
 
     def forward(self, x):
         if self.sample_from == "simplex_center":
             alphas = np.ones(self.args.floco.endpoints) / np.ones(self.args.floco.endpoints).sum()
-        else:
+        elif self.sample_from == "simplex_uniform":
+            unormalized_alphas = np.random.exponential(scale=1.0, size=self.args.floco.endpoints)
+            alphas = unormalized_alphas / unormalized_alphas.sum()
+        elif self.sample_from == "subregion_center":
+            center, radius = self.subregion_parameters
+            alphas = center
+        elif self.sample_from == "subregion_uniform":
             center, radius = self.subregion_parameters
             alphas = sample_L1_ball(center, radius, 1)
         self.classifier.set_alphas(alphas)

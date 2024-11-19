@@ -116,29 +116,55 @@ class FLbenchTrainer:
                 for split in ["train", "val", "test"]:
                     results[stage][split].update(metrics[stage][split])
 
+    # def _parallel_test(self, clients: list[int], results: dict):
+    #     i = 0
+    #     futures = []
+    #     idle_workers = deque(range(self.num_workers))
+    #     job_map = {}  # {future: (client_id, worker_id)}
+    #     while i < len(clients) or len(futures) > 0:
+    #         while i < len(clients) and len(idle_workers) > 0:
+    #             server_package = ray.put(self.server.package(clients[i]))
+    #             worker_id = idle_workers.popleft()
+    #             future = self.workers[worker_id].test.remote(server_package)
+    #             job_map[future] = (clients[i], worker_id)
+    #             futures.append(future)
+    #             i += 1
+
+    #         if len(futures) > 0:
+    #             all_finished, futures = ray.wait(futures)
+    #             for finished in all_finished:
+    #                 metrics = ray.get(finished)
+    #                 _, worker_id = job_map[finished]
+    #                 idle_workers.append(worker_id)
+    #                 for stage in ["before", "after"]:
+    #                     for split in ["train", "val", "test"]:
+    #                         results[stage][split].update(metrics[stage][split])
+
     def _parallel_test(self, clients: list[int], results: dict):
         i = 0
         futures = []
         idle_workers = deque(range(self.num_workers))
-        job_map = {}  # {future: (client_id, worker_id)}
+        map = {}  # {future: (client_id, worker_id)}
         while i < len(clients) or len(futures) > 0:
             while i < len(clients) and len(idle_workers) > 0:
                 server_package = ray.put(self.server.package(clients[i]))
                 worker_id = idle_workers.popleft()
                 future = self.workers[worker_id].test.remote(server_package)
-                job_map[future] = (clients[i], worker_id)
+                map[future] = (clients[i], worker_id)
                 futures.append(future)
                 i += 1
 
             if len(futures) > 0:
-                all_finished, futures = ray.wait(futures)
+                all_finished, futures = ray.wait(futures, timeout=None)
                 for finished in all_finished:
-                    metrics = ray.get(finished)
-                    _, worker_id = job_map[finished]
+                    metrics = ray.get(finished, timeout=None)
+                    client_id, worker_id = map[finished]
                     idle_workers.append(worker_id)
                     for stage in ["before", "after"]:
                         for split in ["train", "val", "test"]:
-                            results[stage][split].update(metrics[stage][split])
+                            results[stage][split]['acc'].append(metrics[stage][split]['acc'])
+                            results[stage][split]['loss'].append(metrics[stage][split]['loss'])
+                            results[stage][split]['ece'].append(metrics[stage][split]['ece'])
 
     def _serial_exec(
         self,
