@@ -2,6 +2,8 @@ from collections import OrderedDict
 from copy import deepcopy
 from typing import Any
 
+import torch
+
 from src.client.fedavg import FedAvgClient
 
 
@@ -53,6 +55,13 @@ class FlocoClient(FedAvgClient):
                 lamda=self.args.floco.lamda,
                 **common_params
             )
+
+    @torch.no_grad()
+    def evaluate(self):
+        if self.args.floco.pers_epoch > 0:
+            return super().evaluate(self.pers_model)
+        else:
+            return super().evaluate()
 
 
 def training_loop(
