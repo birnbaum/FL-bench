@@ -45,8 +45,8 @@ class FlocoClient(FedAvgClient):
         )
         # Train global solution simplex
         training_loop(model=self.model, local_epoch=self.local_epoch, **common_params)
-        if self.args.floco.pers_epoch > 0:
-            # Train personalized solution simplex (Floco+)
+        if self.args.floco.pers_epoch > 0:  # Floco+
+            # Train personalized solution simplex
             training_loop(
                 model=self.pers_model,
                 local_epoch=self.args.floco.pers_epoch,
@@ -54,6 +54,7 @@ class FlocoClient(FedAvgClient):
                 lamda=self.args.floco.lamda,
                 **common_params
             )
+
     @torch.no_grad()
     def evaluate(self):
         if self.args.floco.pers_epoch > 0:
@@ -80,20 +81,17 @@ def training_loop(
         for x, y in dataloader:
             x, y = x.to(device), y.to(device)
             logit = model(x)
-            loss = criterion(logit, y)  # TODO switched
-            optimizer.zero_grad()  # TODO switched
+            loss = criterion(logit, y)
+            optimizer.zero_grad()
             loss.backward()
-            if reg_model_params is not None:  # TODO what is this?
-                for pers_param, global_param in zip(
-                    model.parameters(), reg_model_params
-                ):
-                    if pers_param.requires_grad:
-                        try:
-                            pers_param.grad.data += lamda * (
-                                pers_param.data - global_param.data
-                            )
-                        except:
-                            pass
+            if reg_model_params is not None:
+                _regularize_pers_model(model, reg_model_params, lamda)
             optimizer.step()
         if lr_scheduler is not None:
             lr_scheduler.step()
+
+
+def _regularize_pers_model(model, reg_model_params, lamda):
+    for pers_param, global_param in zip(model.parameters(), reg_model_params):
+        if pers_param.requires_grad and pers_param.grad is not None:
+            pers_param.grad.data += lamda * pers_param.data - global_param.data

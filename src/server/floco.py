@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from argparse import ArgumentParser
 from copy import deepcopy
 from typing import Union, Literal
@@ -42,6 +43,14 @@ class FlocoServer(FedAvgServer):
         )
         self.model = SimplexModel(self.args)
         self.model.check_and_preprocess(self.args)
+        _init_global_params, _init_global_params_name = [], []
+        for key, param in self.model.named_parameters():
+            _init_global_params.append(param.data.clone())
+            _init_global_params_name.append(key)
+        self.public_model_param_names = _init_global_params_name
+        self.public_model_params: OrderedDict[str, torch.Tensor] = OrderedDict(
+            zip(_init_global_params_name, _init_global_params)
+        )
         self.init_trainer(FlocoClient)
         self.projected_clients = None
 

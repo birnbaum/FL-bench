@@ -119,7 +119,6 @@ class FedAvgServer:
             dataset=self.args.dataset.name,
             pretrained=self.args.model.use_torchvision_pretrained_weights,
         )
-        print(f'FedAvg server model: {self.model}')
 
         self.model.check_and_preprocess(self.args)
 
