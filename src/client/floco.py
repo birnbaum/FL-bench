@@ -11,7 +11,6 @@ class FlocoClient(FedAvgClient):
     def __init__(self, **commons):
         super().__init__(**commons)
         self.pers_model = deepcopy(self.model).to(self.device)
-        print(f'Floco self.pers_model - {self.pers_model}')
         self.optimizer.add_param_group({"params": self.pers_model.parameters()})
         self.init_optimizer_state = deepcopy(self.optimizer.state_dict())
 

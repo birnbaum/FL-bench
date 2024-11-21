@@ -275,7 +275,8 @@ class FedAvgClient:
                     model=self.model,
                     dataloader=self.testloader,
                     num_classes=NUM_CLASSES[self.args.dataset.name],
-                    device=self.device
+                    device=self.device,
+                    global_test=True
                 )
         else:
             test_acc, test_acc1, test_acc2, test_loss, test_ece = 0., 0., 0., 0., 0.

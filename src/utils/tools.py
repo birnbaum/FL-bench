@@ -93,7 +93,8 @@ def evaluate_model(
     model: torch.nn.Module,
     dataloader: DataLoader,
     num_classes: int,
-    device=torch.device("cpu")
+    device=torch.device("cpu"),
+    global_test: bool = False,
 ) -> Metrics:
     """For evaluating the `model` over `dataloader` and return metrics.
 
@@ -108,6 +109,8 @@ def evaluate_model(
     """
     model.eval()
     model.to(device)
+    if global_test:
+        model.sample_from = "simplex_center"
     ece_fn = CalibrationError(task="multiclass", num_classes=num_classes)
     accumulated_loss = 0.0
     correct_samples = 0
