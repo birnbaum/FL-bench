@@ -1,4 +1,3 @@
-import sys
 from argparse import ArgumentParser
 from copy import deepcopy
 from typing import Union, Literal
@@ -36,14 +35,13 @@ class FlocoServer(FedAvgServer):
         algorithm_name: str = "Floco",
         unique_model=False,
         use_fedavg_client_cls=True,
-        return_diff=True,
+        return_diff=False,
     ):
         super().__init__(
             args, algorithm_name, unique_model, use_fedavg_client_cls, return_diff
         )
         self.model = SimplexModel(self.args)
         self.model.check_and_preprocess(self.args)
-        print(f'Floco server model: {self.model}')
         self.init_trainer(FlocoClient)
         self.projected_clients = None
 
@@ -109,7 +107,7 @@ class SimplexModel(DecoupledModel):
             bias=True,
             seed=self.args.common.seed,
         )
-        self.sample_from = "simplex_uniform"
+        self.sample_from = "simplex_center"
         self.subregion_parameters = None
 
     def forward(self, x):
@@ -156,35 +154,36 @@ def project_clients(client_packages, endpoints, return_diff):
             if "classifier._weights" in k
         ])
     client_stats = np.array(list(gradient_dict.values()))
-    pca_stats = decomposition.PCA(n_components=endpoints).fit_transform(client_stats)
+    kappas = decomposition.PCA(n_components=endpoints).fit_transform(client_stats)
 
     # Find optimal projection
     lowest_log_energy = np.inf
     best_projection = None
     for i, z in enumerate(np.linspace(1e-4, 1, 1000)):
-        projection = _project_client(pca_stats, z=z)
-        projection /= projection.sum(axis=1, keepdims=True)
-        log_energy = _riesz_s_energy(projection)
+        betas = _project_client(kappas, z=z)
+        betas /= betas.sum(axis=1, keepdims=True)
+        log_energy = _riesz_s_energy(betas)
         if log_energy not in [-np.inf, np.inf] and log_energy < lowest_log_energy:
             lowest_log_energy = log_energy
-            best_projection = projection
-    return best_projection
+            best_betas = betas
+    return best_betas
 
 
-def _project_client(V, z):  # TODO what is V?
+def _project_client(kappas, z):  # TODO what is V?
     """Projection of x onto the simplex, scaled by z.
 
     P(x; z) = argmin_{y >= 0, sum(y) = z} ||y - x||^2
     """
-    n_features = V.shape[1]
-    U = np.sort(V, axis=1)[:, ::-1]
-    z = np.ones(len(V)) * z
-    cssv = np.cumsum(U, axis=1) - z[:, np.newaxis]
+    n_features = kappas.shape[1]
+    sorted_kappas = np.sort(kappas, axis=1)[:, ::-1]
+    z = np.ones(len(kappas)) * z
+    cssv = np.cumsum(sorted_kappas, axis=1) - z[:, np.newaxis]
     ind = np.arange(n_features) + 1
-    cond = U - cssv / ind > 0
-    rho = np.count_nonzero(cond, axis=1)
-    theta = cssv[np.arange(len(V)), rho - 1] / rho
-    return np.maximum(V - theta[:, np.newaxis], 0)
+    cond = sorted_kappas - cssv / ind > 0
+    nonzero_kappas = np.count_nonzero(cond, axis=1)
+    normalized_kappas = cssv[np.arange(len(kappas)), nonzero_kappas - 1] / nonzero_kappas
+    betas = np.maximum(kappas - normalized_kappas[:, np.newaxis], 0)
+    return betas
 
 
 def _riesz_s_energy(simplex_points):
