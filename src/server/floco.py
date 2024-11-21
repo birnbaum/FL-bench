@@ -1,6 +1,5 @@
 from argparse import ArgumentParser
 from copy import deepcopy
-from typing import Union, Literal
 
 import numpy as np
 import torch
@@ -111,18 +110,16 @@ class SimplexModel(DecoupledModel):
         self.subregion_parameters = None
 
     def forward(self, x):
+        endpoints = self.args.floco.endpoints
         if self.sample_from == "simplex_center":
-            alphas = np.ones(self.args.floco.endpoints) / np.ones(self.args.floco.endpoints).sum()
+            self.classifier.alphas = tuple([1 / endpoints for _ in range(endpoints)])
         elif self.sample_from == "simplex_uniform":
-            unormalized_alphas = np.random.exponential(scale=1.0, size=self.args.floco.endpoints)
-            alphas = unormalized_alphas / unormalized_alphas.sum()
+            sample = np.random.exponential(scale=1.0, size=endpoints)
+            self.classifier.alphas = sample / sample.sum()
         elif self.sample_from == "subregion_center":
-            center, radius = self.subregion_parameters
-            alphas = center
+            self.classifier.alphas = self.subregion_parameters[0]
         elif self.sample_from == "subregion_uniform":
-            center, radius = self.subregion_parameters
-            alphas = _sample_L1_ball(center, radius)
-        self.classifier.set_alphas(alphas)
+            self.classifier.alphas = _sample_L1_ball(*self.subregion_parameters)
         return super().forward(x)
 
 
@@ -130,18 +127,14 @@ class SimplexLinear(torch.nn.Linear):
     def __init__(self, endpoints: int, seed: int, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.endpoints = endpoints
-        self._alphas = tuple([1 / endpoints for _ in range(endpoints)])
+        self.alphas = tuple([1 / endpoints for _ in range(endpoints)])
         self._weights = torch.nn.ParameterList(
             [_initialize_weight(self.weight, seed + i) for i in range(endpoints)]
         )
 
     @property
     def weight(self) -> torch.nn.Parameter:
-        return sum(alpha * weight for alpha, weight in zip(self._alphas, self._weights))
-
-    def set_alphas(self, alphas: Union[tuple[float], Literal["center"]]):
-        assert len(alphas) == len(self._weights)
-        self._alphas = alphas
+        return sum(alpha * weight for alpha, weight in zip(self.alphas, self._weights))
 
 
 def project_clients(client_packages, endpoints, return_diff):
@@ -158,23 +151,22 @@ def project_clients(client_packages, endpoints, return_diff):
 
     # Find optimal projection
     lowest_log_energy = np.inf
-    best_projection = None
+    best_beta = None
     for i, z in enumerate(np.linspace(1e-4, 1, 1000)):
         betas = _project_client_onto_simplex(kappas, z=z)
         betas /= betas.sum(axis=1, keepdims=True)
         log_energy = _riesz_s_energy(betas)
         if log_energy not in [-np.inf, np.inf] and log_energy < lowest_log_energy:
             lowest_log_energy = log_energy
-            best_projection = betas
-    return best_projection
+            best_beta = betas
+    return best_beta
 
 
 def _project_client_onto_simplex(kappas, z):
-    n_features = kappas.shape[1]
     sorted_kappas = np.sort(kappas, axis=1)[:, ::-1]
     z = np.ones(len(kappas)) * z
     cssv = np.cumsum(sorted_kappas, axis=1) - z[:, np.newaxis]
-    ind = np.arange(n_features) + 1
+    ind = np.arange(kappas.shape[1]) + 1
     cond = sorted_kappas - cssv / ind > 0
     nonzero_kappas = np.count_nonzero(cond, axis=1)
     normalized_kappas = cssv[np.arange(len(kappas)), nonzero_kappas - 1] / nonzero_kappas
