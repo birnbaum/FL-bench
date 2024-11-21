@@ -82,17 +82,14 @@ def training_loop(
             loss = criterion(logit, y)
             optimizer.zero_grad()
             loss.backward()
-            if reg_model_params is not None:  # TODO what is this?
-                for pers_param, global_param in zip(
-                    model.parameters(), reg_model_params
-                ):
-                    if pers_param.requires_grad:
-                        try:
-                            pers_param.grad.data += lamda * (
-                                pers_param.data - global_param.data
-                            )
-                        except:
-                            pass
+            if reg_model_params is not None:
+                _regularize_pers_model(model, reg_model_params, lamda)
             optimizer.step()
         if lr_scheduler is not None:
             lr_scheduler.step()
+
+
+def _regularize_pers_model(model, reg_model_params, lamda):
+    for pers_param, global_param in zip(model.parameters(), reg_model_params):
+        if pers_param.requires_grad and pers_param.grad is not None:
+            pers_param.grad.data += lamda * pers_param.data - global_param.data
