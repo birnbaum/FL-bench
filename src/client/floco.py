@@ -23,12 +23,12 @@ class FlocoClient(FedAvgClient):
             (key, param.to(self.device))
             for key, param in package["regular_model_params"].items()
         ).values()
-        if self.args.floco.pers_epoch > 0:
+        if self.args.floco.pers_epoch > 0:  # Floco+
             self.pers_model.load_state_dict(package["personalized_model_params"])
 
     def package(self):
         client_package = super().package()
-        if self.args.floco.pers_epoch > 0:
+        if self.args.floco.pers_epoch > 0:  # Floco+
             client_package["personalized_model_params"] = OrderedDict(
                 (key, param.detach().cpu().clone())
                 for key, param in self.pers_model.state_dict().items()
@@ -46,8 +46,8 @@ class FlocoClient(FedAvgClient):
         )
         # Train global solution simplex
         training_loop(model=self.model, local_epoch=self.local_epoch, **common_params)
-        if self.args.floco.pers_epoch > 0:
-            # Train personalized solution simplex (Floco+)
+        if self.args.floco.pers_epoch > 0:  # Floco+
+            # Train personalized solution simplex
             training_loop(
                 model=self.pers_model,
                 local_epoch=self.args.floco.pers_epoch,
@@ -58,7 +58,10 @@ class FlocoClient(FedAvgClient):
 
     @torch.no_grad()
     def evaluate(self):
-        return super().evaluate(self.pers_model if self.args.floco.pers_epoch > 0 else None)
+        if self.args.floco.pers_epoch > 0:  # Floco+
+            super().evaluate(self.pers_model)
+        else:
+            super().evaluate()
 
 
 def training_loop(

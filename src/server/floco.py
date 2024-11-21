@@ -25,7 +25,7 @@ class FlocoServer(FedAvgServer):
         # Floco+ (only used if pers_epoch > 0)
         parser.add_argument("--pers_epoch", type=int, default=0)
         parser.add_argument("--lamda", type=float, default=1)
-        
+
         return parser.parse_args(args_list)
 
     def __init__(
@@ -44,7 +44,7 @@ class FlocoServer(FedAvgServer):
         self.init_trainer(FlocoClient)
         self.projected_clients = None
 
-        if self.args.floco.pers_epoch > 0:
+        if self.args.floco.pers_epoch > 0:  # Floco+
             self.clients_personalized_model_params = {
                 i: deepcopy(self.model.state_dict()) for i in self.train_clients
             }
@@ -61,7 +61,7 @@ class FlocoServer(FedAvgServer):
             self.selected_clients = selected_clients  # restore selected clients
 
         client_packages = self.trainer.train()
-        if self.args.floco.pers_epoch > 0:
+        if self.args.floco.pers_epoch > 0:  # Floco+
             for client_id in self.selected_clients:
                 self.clients_personalized_model_params[client_id] = client_packages[
                     client_id
@@ -83,7 +83,7 @@ class FlocoServer(FedAvgServer):
                 self.projected_clients[client_id],
                 self.args.floco.rho,
             )
-        if self.args.floco.pers_epoch > 0:
+        if self.args.floco.pers_epoch > 0:  # Floco+
             server_package["personalized_model_params"] = (
                 self.clients_personalized_model_params[client_id]
             )
@@ -141,11 +141,13 @@ def project_clients(client_packages, endpoints, return_diff):
     model_grad_type = "model_params_diff" if return_diff else "regular_model_params"
     gradient_dict = {i: None for i in range(len(client_packages))}  # init sorted dict
     for client_id, package in client_packages.items():
-        gradient_dict[client_id] = np.concatenate([
-            v.cpu().numpy().flatten()
-            for k, v in package[model_grad_type].items()
-            if "classifier._weights" in k
-        ])
+        gradient_dict[client_id] = np.concatenate(
+            [
+                v.cpu().numpy().flatten()
+                for k, v in package[model_grad_type].items()
+                if "classifier._weights" in k
+            ]
+        )
     client_stats = np.array(list(gradient_dict.values()))
     kappas = decomposition.PCA(n_components=endpoints).fit_transform(client_stats)
 
@@ -168,8 +170,8 @@ def _project_client_onto_simplex(kappas, z):
     cssv = np.cumsum(sorted_kappas, axis=1) - z[:, np.newaxis]
     ind = np.arange(kappas.shape[1]) + 1
     cond = sorted_kappas - cssv / ind > 0
-    nonzero_kappas = np.count_nonzero(cond, axis=1)
-    normalized_kappas = cssv[np.arange(len(kappas)), nonzero_kappas - 1] / nonzero_kappas
+    nonzero = np.count_nonzero(cond, axis=1)
+    normalized_kappas = cssv[np.arange(len(kappas)), nonzero - 1] / nonzero
     betas = np.maximum(kappas - normalized_kappas[:, np.newaxis], 0)
     return betas
 
@@ -183,7 +185,7 @@ def _riesz_s_energy(simplex_points):
     # select only upper triangular matrix to have each mutual distance once
     mutual_dist = distance[np.triu_indices(len(simplex_points), 1)]
     mutual_dist[np.argwhere(mutual_dist == 0).flatten()] = epsilon
-    energies = (1 / mutual_dist ** 2)  # calculate energy by summing up the squared distances
+    energies = 1 / mutual_dist**2
     energy = energies[~np.isnan(energies)].sum()
     log_energy = -np.log(len(mutual_dist)) + np.log(energy)
     return log_energy
