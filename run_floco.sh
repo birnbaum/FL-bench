@@ -8,4 +8,4 @@
 
 cp /home/space/datasets-sqfs/FLIIDNIID/Data.sqfs /tmp/
 
-apptainer run -B /tmp/Data.sqfs:/cluster:image-src=/ --nv bench_fl.sif python main.py --config-name=${1} method=${2} +floco.endpoints=${3} +floco.tau=${4} +floco.rho=${5} +floco.pers_epoch=${6}
+apptainer run -B /tmp/Data.sqfs:/cluster:image-src=/ --nv fl_bench.sif python main.py --config-name=${1} method=${2} +floco.endpoints=${3} +floco.tau=${4} +floco.rho=${5} +floco.pers_epoch=${6}
