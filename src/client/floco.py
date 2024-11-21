@@ -82,8 +82,9 @@ def training_loop(
         for x, y in dataloader:
             x, y = x.to(device), y.to(device)
             logit = model(x)
-            optimizer.zero_grad()  # TODO switched
             loss = criterion(logit, y)  # TODO switched
+            optimizer.zero_grad()  # TODO switched
+            loss.backward()
             if reg_model_params is not None:  # TODO what is this?
                 for pers_param, global_param in zip(
                     model.parameters(), reg_model_params
@@ -95,7 +96,6 @@ def training_loop(
                             )
                         except:
                             pass
-            loss.backward()
             optimizer.step()
         if lr_scheduler is not None:
             lr_scheduler.step()
