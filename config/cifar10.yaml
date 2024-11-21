@@ -69,7 +69,7 @@ parallel:
   # The amount of computational resources you allocate for your Ray cluster.
   # Default as null for all.
   num_cpus: 8
-  num_gpus: 0
+  num_gpus: 1
 
   # Should be set larger than 1, or training mode fallback to `serial`
   # Set a larger `num_workers` can further boost efficiency,
@@ -78,8 +78,8 @@ parallel:
 
 common:
   seed: 42 # Random seed of the run.
-  join_ratio: 0.1 # Ratio for (client each round) / (client num in total).
-  global_epoch: 100 # Number of global epochs, also called communication round.
+  join_ratio: 0.3 # Ratio for (client each round) / (client num in total).
+  global_epoch: 500 # Number of global epochs, also called communication round.
   local_epoch: 5 # Number if epochs of client local training.
   finetune_epoch: 0 # Number of epochs of clients fine-tunning their models before test.
   batch_size: 50 # Data batch size for client local training.
@@ -106,7 +106,7 @@ common:
 
   verbose_gap: 10 # Interval round of displaying clients training performance on terminal.
   monitor: tensorboard # [null, visdom, tensorboard]
-  use_cuda: false # Whether to use cuda for training.
+  use_cuda: true # Whether to use cuda for training.
 
   save_log: true # Whether to save log files in out/<method>/<start_time>.
   save_model: false # Whether to save model weights (*.pt) in out/<method>/<start_time>.
