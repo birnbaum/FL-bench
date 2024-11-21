@@ -19,9 +19,9 @@ class FlocoServer(FedAvgServer):
     @staticmethod
     def get_hyperparams(args_list=None) -> Namespace:
         parser = ArgumentParser()
-        parser.add_argument("--endpoints", type=int, default=1)  # TODO improve terminology
-        parser.add_argument("--tau", type=int, default=100)  # TODO improve terminology
-        parser.add_argument("--rho", type=float, default=0.1)  # TODO improve terminology
+        parser.add_argument("--endpoints", type=int, default=1)
+        parser.add_argument("--tau", type=int, default=100)
+        parser.add_argument("--rho", type=float, default=0.1)
 
         # Floco+ (only used if pers_epoch > 0)
         parser.add_argument("--pers_epoch", type=int, default=0)
@@ -121,7 +121,7 @@ class SimplexModel(DecoupledModel):
             alphas = center
         elif self.sample_from == "subregion_uniform":
             center, radius = self.subregion_parameters
-            alphas = sample_L1_ball(center, radius, 1)
+            alphas = _sample_L1_ball(center, radius)
         self.classifier.set_alphas(alphas)
         return super().forward(x)
 
@@ -160,20 +160,16 @@ def project_clients(client_packages, endpoints, return_diff):
     lowest_log_energy = np.inf
     best_projection = None
     for i, z in enumerate(np.linspace(1e-4, 1, 1000)):
-        betas = _project_client(kappas, z=z)
+        betas = _project_client_onto_simplex(kappas, z=z)
         betas /= betas.sum(axis=1, keepdims=True)
         log_energy = _riesz_s_energy(betas)
         if log_energy not in [-np.inf, np.inf] and log_energy < lowest_log_energy:
             lowest_log_energy = log_energy
-            best_betas = betas
-    return best_betas
+            best_projection = betas
+    return best_projection
 
 
-def _project_client(kappas, z):  # TODO what is V?
-    """Projection of x onto the simplex, scaled by z.
-
-    P(x; z) = argmin_{y >= 0, sum(y) = z} ||y - x||^2
-    """
+def _project_client_onto_simplex(kappas, z):
     n_features = kappas.shape[1]
     sorted_kappas = np.sort(kappas, axis=1)[:, ::-1]
     z = np.ones(len(kappas)) * z
@@ -201,16 +197,10 @@ def _riesz_s_energy(simplex_points):
     return log_energy
 
 
-def sample_L1_ball(center, radius, num_samples):
-    dim = len(center)
-    samples = np.zeros((num_samples, dim))
-    # Generate a point on the surface of the L1 unit ball
-    u = np.random.uniform(-1, 1, dim)
+def _sample_L1_ball(center, radius):
+    u = np.random.uniform(-1, 1, len(center))
     u = np.sign(u) * (np.abs(u) / np.sum(np.abs(u)))
-    # Scale the point to fit within the radius
-    r = np.random.uniform(0, radius)
-    samples = center + r * u
-    return samples
+    return center + np.random.uniform(0, radius) * u
 
 
 def _initialize_weight(init_weight: torch.Tensor, seed: int) -> torch.nn.Parameter:

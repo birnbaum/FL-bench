@@ -58,10 +58,7 @@ class FlocoClient(FedAvgClient):
 
     @torch.no_grad()
     def evaluate(self):
-        if self.args.floco.pers_epoch > 0:
-            return super().evaluate(self.pers_model)
-        else:
-            return super().evaluate()
+        return super().evaluate(self.pers_model if self.args.floco.pers_epoch > 0 else None)
 
 
 def training_loop(
@@ -82,8 +79,8 @@ def training_loop(
         for x, y in dataloader:
             x, y = x.to(device), y.to(device)
             logit = model(x)
-            loss = criterion(logit, y)  # TODO switched
-            optimizer.zero_grad()  # TODO switched
+            loss = criterion(logit, y)
+            optimizer.zero_grad()
             loss.backward()
             if reg_model_params is not None:  # TODO what is this?
                 for pers_param, global_param in zip(
