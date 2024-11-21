@@ -40,10 +40,10 @@ class FedRoDClient(FedAvgClient):
         )
         self.clients_label_counts = []
         for indices in self.data_indices:
-            counter = Counter(np.array(self.dataset.targets)[indices["train"]])
+            counter = Counter(np.array(self.train_dataset.targets)[indices["train"]])
             self.clients_label_counts.append(
                 torch.tensor(
-                    [counter.get(i, 0) for i in range(len(self.dataset.classes))],
+                    [counter.get(i, 0) for i in range(len(self.train_dataset.classes))],
                     device=self.device,
                 )
             )
@@ -62,7 +62,7 @@ class FedRoDClient(FedAvgClient):
 
     def fit(self):
         self.model.train()
-        self.dataset.train()
+        self.train_dataset.train()
         if self.args.fedrod.hyper:
             if self.args.fedrod.hyper and self.first_time_selected:
                 self.hypernetwork.to(self.device)
@@ -125,7 +125,7 @@ class FedRoDClient(FedAvgClient):
 
     def finetune(self):
         self.model.train()
-        self.dataset.train()
+        self.train_dataset.train()
         for _ in range(self.args.common.finetune_epoch):
             for x, y in self.trainloader:
                 if len(x) <= 1:
