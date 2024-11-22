@@ -71,7 +71,7 @@ class FedAvgServer:
         if self.args.dataset.name not in ['femnist']:
             self.output_dir += f"/{self.args.dataset.split}_{self.args.dataset.split_arg}"
         self.output_dir += f"/{self.algorithm_name}"
-        if self.algorithm_name in ["FedAvg", "FedRod"]:
+        if self.algorithm_name in ["FedAvg", "FedRoD"]:
             self.output_dir += f"_fe_{self.args.common.finetune_epoch}"
         if self.algorithm_name == 'Ditto':
             self.output_dir += f"_l_{self.args.ditto.lamda}_fe_{self.args.ditto.pers_epoch}"
