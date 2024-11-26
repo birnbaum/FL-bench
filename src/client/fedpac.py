@@ -15,9 +15,9 @@ class FedPACClient(FedAvgClient):
         self.global_prototypes = {}
         self.label_distribs = {}
         for client_id, indices in enumerate(self.data_indices):
-            counter = Counter(np.array(self.dataset.targets)[indices["train"]])
+            counter = Counter(np.array(self.train_dataset.targets)[indices["train"]])
             self.label_distribs[client_id] = torch.tensor(
-                [counter.get(i, 0) for i in range(len(self.dataset.classes))],
+                [counter.get(i, 0) for i in range(len(self.train_dataset.classes))],
                 dtype=torch.float,
             )
 
@@ -44,9 +44,9 @@ class FedPACClient(FedAvgClient):
         distrib2 = distrib1.mul(distrib1)
         self.v = 0
         self.h_ref = torch.zeros(
-            (NUM_CLASSES[self.args.dataset.name], feature_length), device=self.device
+            (NUM_CLASSES[self.args.train_dataset.name], feature_length), device=self.device
         )
-        for i in range(NUM_CLASSES[self.args.dataset.name]):
+        for i in range(NUM_CLASSES[self.args.train_dataset.name]):
             if isinstance(features[i], torch.Tensor):
                 size = features[i].shape[0]
                 mean = features[i].mean(dim=0)
@@ -60,7 +60,7 @@ class FedPACClient(FedAvgClient):
 
     @torch.no_grad()
     def calculate_prototypes(self, mean=False):
-        prototypes = [[] for _ in self.dataset.classes]
+        prototypes = [[] for _ in self.train_dataset.classes]
         for x, y in self.trainloader:
             if len(y) <= 1:
                 continue
@@ -97,7 +97,7 @@ class FedPACClient(FedAvgClient):
 
     def fit(self):
         self.model.train()
-        self.dataset.train()
+        self.train_dataset.train()
         local_prototypes = self.calculate_prototypes(mean=True)
         for E in range(self.local_epoch):
             if E < self.args.fedpac.train_classifier_round:
