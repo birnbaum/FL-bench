@@ -25,6 +25,7 @@ from data.utils.schemes import (
     randomly_assign_classes,
     allocate_shards,
     semantic_partition,
+    fold
 )
 from data.utils.datasets import DATASETS, BaseDataset
 
@@ -64,6 +65,7 @@ def main(args):
     else:  # MEDMNIST, COVID, MNIST, CIFAR10, ...
         # NOTE: If `args.ood_domains`` is not empty, then FL-bench will map all labels (class space) to the domain space
         # and partition data according to the new `targets` array.
+        print(args.dataset)
         dataset = DATASETS[args.dataset](dataset_root, args)
         targets = np.array(dataset.targets, dtype=np.int32)
         target_indices = np.arange(len(targets), dtype=np.int32)
@@ -114,6 +116,18 @@ def main(args):
                     least_samples=args.least_samples,
                     partition=partition,
                     stats=stats,
+                )
+            elif args.folds is not None:  # Dirichlet(alpha)
+                fold(
+                    targets=targets[target_indices],
+                    target_indices=target_indices,
+                    label_set=valid_label_set,
+                    client_num=client_num,
+                    alpha=args.alpha,
+                    least_samples=args.least_samples,
+                    partition=partition,
+                    stats=stats,
+                    folds=args.folds,
                 )
             elif args.classes != 0:  # randomly assign classes
                 args.classes = max(1, min(args.classes, len(dataset.classes)))
@@ -354,6 +368,9 @@ if __name__ == "__main__":
     # Dirichlet
     parser.add_argument("-a", "--alpha", type=float, default=0)
     parser.add_argument("-ls", "--least_samples", type=int, default=40)
+
+    # Fold
+    parser.add_argument("-f", "--folds", type=int, default=None)
 
     # For synthetic data only
     parser.add_argument("--gamma", type=float, default=0.5)

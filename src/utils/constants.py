@@ -20,7 +20,7 @@ DEFAULTS = {
     "dataset": {
         "name": "mnist",
         "split": "Dirichlet",
-        "split_arg": 0.3
+        "split_arg": 0.3,
         },
     "model": {
         "name": "lenet5",
