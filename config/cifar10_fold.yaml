@@ -129,6 +129,8 @@ pfedsim:
   warmup_round: 0.5
 ditto:
   pers_epochs: 5
+fedper:
+  pers_epochs: 5
 floco:
   pers_epochs: 5
   endpoints: 20
