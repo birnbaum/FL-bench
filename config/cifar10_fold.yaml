@@ -127,3 +127,10 @@ fedprox:
   mu: 0.01
 pfedsim:
   warmup_round: 0.5
+ditto:
+  pers_epochs: 5
+floco:
+  pers_epochs: 5
+  endpoints: 20
+  tau: 250
+  rho: 0.1

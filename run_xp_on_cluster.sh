@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=dit
+#SBATCH --job-name=fed
 #SBATCH --partition=gpu-5h
 #SBATCH --gpus-per-node=40gb:1
 #SBATCH --cpus-per-task=10
@@ -8,4 +8,4 @@
 
 cp /home/space/datasets-sqfs/FLIIDNIID/Data.sqfs /tmp/
 
-apptainer run -B /tmp/Data.sqfs:/cluster:image-src=/ --nv fl_bench.sif python main.py --config-name=${1} method=${2} +ditto.pers_epoch=${3}
+apptainer run -B /tmp/Data.sqfs:/cluster:image-src=/ --nv fl_bench.sif python main.py --config-name=${1} method=${2}
