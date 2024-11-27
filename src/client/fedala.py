@@ -15,7 +15,7 @@ class FedALAClient(FedAvgClient):
         super().__init__(**commons)
         self.weights = None  # Learnable local aggregation weights.
         self.start_phase = True
-        self.sampled_trainset = Subset(self.dataset, indices=[])
+        self.sampled_trainset = Subset(self.train_dataset, indices=[])
         self.sampled_trainloader = DataLoader(
             self.sampled_trainset, self.args.common.batch_size
         )

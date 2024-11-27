@@ -11,7 +11,7 @@ from src.client.fedavg import FedAvgClient
 class ElasticClient(FedAvgClient):
     def __init__(self, **commons):
         super().__init__(**commons)
-        self.sampled_trainset = Subset(self.dataset, indices=[])
+        self.sampled_trainset = Subset(self.train_dataset, indices=[])
         self.sampled_trainloader = DataLoader(
             self.sampled_trainset, self.args.common.batch_size
         )
