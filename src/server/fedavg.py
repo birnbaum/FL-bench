@@ -75,6 +75,8 @@ class FedAvgServer:
             self.output_dir += f"_fe_{self.args.common.finetune_epoch}"
         if self.algorithm_name == 'Ditto':
             self.output_dir += f"_l_{self.args.ditto.lamda}_fe_{self.args.ditto.pers_epoch}"
+        if self.algorithm_name == 'FedPer':
+            self.output_dir += f"_fe_{self.args.fedper.pers_epoch}"
         if self.algorithm_name == "Floco":
             self.output_dir += f"_np_{self.args.floco.endpoints}_tau_{self.args.floco.tau}_r_{self.args.floco.rho}_fe_{self.args.floco.pers_epoch}"
         self.output_dir += f"_s_{self.args.common.seed}/"
