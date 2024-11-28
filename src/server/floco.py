@@ -107,6 +107,7 @@ class SimplexModel(DecoupledModel):
         base_model = MODELS[self.args.model.name](
             dataset=self.args.dataset.name,
             pretrained=self.args.model.use_torchvision_pretrained_weights,
+            seed=self.args.common.seed,
         )
         self.base = base_model.base
         self.classifier = SimplexLinear(

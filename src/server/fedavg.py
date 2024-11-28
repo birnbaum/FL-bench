@@ -274,8 +274,8 @@ class FedAvgServer:
                     return_diff=self.return_diff,
                     train_clients=self.train_clients,
                     true_train_clients = self.train_clients,
-                    client_id_mapping=self.client_id_mapping
-                    **extras,
+                    client_id_mapping=self.client_id_mapping,
+                    **{key: ray.put(value) for key, value in extras.items()},
                 ),
             )
         else:
