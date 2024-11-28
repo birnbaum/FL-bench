@@ -120,6 +120,7 @@ class FedAvgServer:
         self.model: DecoupledModel = MODELS[self.args.model.name](
             dataset=self.args.dataset.name,
             pretrained=self.args.model.use_torchvision_pretrained_weights,
+            seed=self.args.common.seed,
         )
 
         self.model.check_and_preprocess(self.args)
