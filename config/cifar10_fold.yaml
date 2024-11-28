@@ -133,6 +133,6 @@ fedper:
   pers_epoch: 5
 floco:
   pers_epoch: 5
-  endpoints: 20
+  endpoints: 10
   tau: 250
   rho: 0.1
