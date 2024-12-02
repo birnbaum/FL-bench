@@ -77,7 +77,7 @@ parallel:
   num_workers: 8
 
 common:
-  seed: 1 # Random seed of the run.
+  seed: 2 # Random seed of the run.
   join_ratio: 0.3 # Ratio for (client each round) / (client num in total).
   global_epoch: 500 # Number of global epochs, also called communication round.
   local_epoch: 5 # Number if epochs of client local training.
