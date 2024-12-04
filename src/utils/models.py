@@ -426,6 +426,21 @@ class CifarCNN(DecoupledModel):
         )
         self.classifier = StandardLinear(in_features=128, out_features=NUM_CLASSES[dataset], bias=bias).seed(seed)
 
+class FEMNISTCNN(DecoupledModel):
+    def __init__(self, dataset, pretrained, num_endpoints=1, seed=42, bias=True):
+        super(FEMNISTCNN, self).__init__()
+        self.base = nn.Sequential(
+            OrderedDict(
+                conv1=StandardConv(in_channels=INPUT_CHANNELS[dataset], out_channels=16, kernel_size=5, padding=0, stride=1, bias=bias).seed(seed),
+                activation1=nn.LeakyReLU(),
+                pool1=nn.MaxPool2d(2, 2),
+                conv2=StandardConv(in_channels=16, out_channels=32, kernel_size=5, padding=0, stride=1, bias=bias).seed(seed),
+                activation2=nn.LeakyReLU(),
+                pool2=nn.MaxPool2d(2, 2),
+                flatten=nn.Flatten(),
+            )
+        )
+        self.classifier = StandardLinear(in_features=800, out_features=NUM_CLASSES[dataset], bias=bias).seed(seed)
 
 class EfficientNet(DecoupledModel):
     archs = {
@@ -531,6 +546,7 @@ MODELS = {
     "alex": AlexNet,
     "2nn": TwoNN,
     "cifarcnn": CifarCNN,
+    "femnistcnn": FEMNISTCNN,
     "squeeze0": partial(SqueezeNet, version="0"),
     "squeeze1": partial(SqueezeNet, version="1"),
     "res18": partial(ResNet, version="18"),
