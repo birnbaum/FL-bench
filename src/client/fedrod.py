@@ -122,6 +122,10 @@ class FedRoDClient(FedAvgClient):
             hyper_loss.backward()
             self.hyper_optimizer.step()
             self.hypernetwork.cpu()
+        
+        # Fune-tuning
+        for _ in range(self.args.fedrod.pers_epoch):
+            self.finetune()
 
     def finetune(self):
         self.model.train()
