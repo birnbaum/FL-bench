@@ -48,14 +48,13 @@ def prune_args(args: Namespace) -> dict:
     elif args.dataset in ["femnist", "celeba"]:
         with open(DATA_ROOT / args.dataset / "preprocess_args.json") as f:
             preprocess_args = json.load(f)
-        args_dict.pop("seed")
         args_dict["split"] = preprocess_args["t"]
         args_dict["sample_seed"] = preprocess_args["smplseed"]
         args_dict["split_seed"] = preprocess_args["spltseed"]
         args_dict["least_samples"] = preprocess_args["k"]
-        args_dict["test_ratio"] = 1.0 - preprocess_args["tf"]
+        args_dict["test_ratio"] = 1.0 - float(preprocess_args["tf"])
         args_dict["val_ratio"] = 0.0
-        args_dict["monitor_window_name_suffix"] = "{}-{}clients-k{}-{}".fotmat(
+        args_dict["monitor_window_name_suffix"] = "{}-{}clients-k{}-{}".format(
             args.dataset, args.client_num, preprocess_args["k"], preprocess_args["t"]
         )
         args_dict.pop("seed")

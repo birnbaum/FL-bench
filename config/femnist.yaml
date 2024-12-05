@@ -9,9 +9,9 @@ dataset:
   # [mnist, cifar10, cifar100, emnist, fmnist, femnist, medmnist,
   # medmnistA, medmnistC, covid19, celeba, synthetic, svhn,
   # tiny_imagenet, cinic10, domain]
-  name: cifar10
-  split: Dirichlet
-  split_arg: 0.3
+  name: femnist
+  split: femnist
+  split_arg: null
 
 model:
   name: femnistcnn

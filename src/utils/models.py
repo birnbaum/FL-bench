@@ -440,7 +440,7 @@ class FEMNISTCNN(DecoupledModel):
                 flatten=nn.Flatten(),
             )
         )
-        self.classifier = StandardLinear(in_features=800, out_features=NUM_CLASSES[dataset], bias=bias).seed(seed)
+        self.classifier = StandardLinear(in_features=512, out_features=NUM_CLASSES[dataset], bias=bias).seed(seed)
 
 class EfficientNet(DecoupledModel):
     archs = {
