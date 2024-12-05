@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=dir
+#SBATCH --job-name=fe
 #SBATCH --partition=cpu-2h
 #SBATCH --cpus-per-task=2
 #SBATCH --mem-per-cpu=32G
