@@ -7,4 +7,4 @@
 
 cp /home/space/datasets-sqfs/FLIIDNIID/Data.sqfs /tmp/
 
-apptainer run -B /tmp/Data.sqfs:/cluster:image-src=/ --nv fl_bench.sif python generate_data.py -d femnist -vr 0.0 -tr 0.2 --seed ${0}
+apptainer run -B /tmp/Data.sqfs:/cluster:image-src=/ --nv fl_bench.sif python generate_data.py -d femnist -vr 0.0 -tr 0.0
