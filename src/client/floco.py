@@ -5,8 +5,6 @@ from typing import Any
 import torch
 
 from src.client.fedavg import FedAvgClient
-from src.utils.tools import evaluate_model
-from src.utils.constants import NUM_CLASSES
 
 
 class FlocoClient(FedAvgClient):
