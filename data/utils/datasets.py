@@ -3,7 +3,7 @@ import os
 import pickle
 from argparse import Namespace
 from pathlib import Path
-from typing import Dict, Type
+from typing import Dict, List, Optional, Type
 
 import numpy as np
 import pandas as pd
@@ -27,6 +27,33 @@ class BaseDataset(Dataset):
         self.test_target_transform = None
         self.data_transform = None
         self.target_transform = None
+    def __init__(
+        self,
+        data: torch.Tensor,
+        targets: torch.Tensor,
+        classes: List[int],
+        train_data_transform: Optional[transforms.Compose] = None,
+        train_target_transform: Optional[transforms.Compose] = None,
+        test_data_transform: Optional[transforms.Compose] = None,
+        test_target_transform: Optional[transforms.Compose] = None,
+    ) -> None:
+        self.data = data
+        self.targets = targets
+        self.classes = classes
+        self.train_data_transform = train_data_transform
+        self.train_target_transform = train_target_transform
+        self.test_data_transform = test_data_transform
+        self.test_target_transform = test_target_transform
+        self.data_transform = self.train_data_transform
+        self.target_transform = self.train_target_transform
+
+        # rescale data to fit in [0, 1.0] if needed
+        self._rescale_data()
+
+    def _rescale_data(self):
+        max_val = self.data.max()
+        if max_val > 1.0:
+            self.data /= 255.0
 
     def __getitem__(self, index):
         data, targets = self.data[index], self.targets[index]
