@@ -1,7 +1,9 @@
 from collections import OrderedDict
 from copy import deepcopy
 from typing import Any
+
 import torch
+
 from src.client.fedavg import FedAvgClient
 from src.utils.tools import evaluate_model
 from src.utils.constants import NUM_CLASSES
@@ -16,18 +18,19 @@ class FlocoClient(FedAvgClient):
 
     def set_parameters(self, package: dict[str, Any]):
         super().set_parameters(package)
-        self.model.sample_from = package["sample_from"]
-        self.model.subregion_parameters = package["subregion_parameters"]
-        self.global_params = OrderedDict(
-            (key, param.to(self.device))
-            for key, param in package["regular_model_params"].items()
-        ).values()
-        if self.args.floco.pers_epoch > 0:
+        if package["subregion_parameters"]:
+            self.model.sample_from = package["sample_from"]
+            self.model.subregion_parameters = package["subregion_parameters"]
+        if self.args.floco.pers_epoch > 0:  # Floco+
+            self.global_params = OrderedDict(
+                (key, param.to(self.device))
+                for key, param in package["regular_model_params"].items()
+            )
             self.pers_model.load_state_dict(package["personalized_model_params"])
 
     def package(self):
         client_package = super().package()
-        if self.args.floco.pers_epoch > 0:
+        if self.args.floco.pers_epoch > 0:  # Floco+
             client_package["personalized_model_params"] = OrderedDict(
                 (key, param.detach().cpu().clone())
                 for key, param in self.pers_model.state_dict().items()
@@ -57,11 +60,11 @@ class FlocoClient(FedAvgClient):
 
     @torch.no_grad()
     def evaluate(self):
-        if self.args.floco.pers_epoch > 0:
-            return super().evaluate(self.pers_model)
+        if self.args.floco.pers_epoch > 0:  # Floco+
+            super().evaluate(self.pers_model)
         else:
-            return super().evaluate()
-    
+            super().evaluate()
+
 
 def training_loop(
     model,
@@ -84,7 +87,7 @@ def training_loop(
             loss = criterion(logit, y)
             optimizer.zero_grad()
             loss.backward()
-            if reg_model_params is not None:
+            if reg_model_params is not None:  # Floco+
                 _regularize_pers_model(model, reg_model_params, lamda)
             optimizer.step()
         if lr_scheduler is not None:
