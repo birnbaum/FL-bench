@@ -18,11 +18,11 @@ In order to generate the dataset splits as proposed in the paper, the following 
 ### CIFAR-10
 #### Dirichlet(0.3)
 ```py
-python generate_data.py -d cifar10 -a 0.3 -cn 100 --val_ratio 0.2 --test_ratio 0.0 --seed <seed>
+python generate_data.py -d cifar10 -a 0.3 -cn 100 --least_samples 600 --val_ratio 0.2 --test_ratio 0.0 --seed <seed>
 ```
 #### Five-Fold
 ```py
-python generate_data.py -d cifar10 -f 5 -cn 100 --val_ratio 0.2 --test_ratio 0.0 --seed <seed>
+python generate_data.py -d cifar10 -f 5 -cn 100 --least_samples 600 --val_ratio 0.2 --test_ratio 0.0 --seed <seed>
 ```
 ### FEMNIST
 Before running this script, the [LEAF](https://leaf.cmu.edu/) dataset has to be downloaded and preprocessed as described [here](https://github.com/KarhouTam/FL-bench/tree/master/data/femnist).
