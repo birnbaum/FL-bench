@@ -6,6 +6,9 @@ Another implementation in the commonly used FL framework [Flower](https://flower
 
 # Installation
 ```sh
+python -m venv venv
+. venv/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
