@@ -8,3 +8,9 @@ venv
 logs/
 .vscode
 *.ipynb_checkpoints
+generate_data_dir.sh
+generate_data_femnist.sh
+generate_data_fold.sh
+run_xp_on_cluster.sh
+fl_bench.def
+.env
