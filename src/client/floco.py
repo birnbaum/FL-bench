@@ -19,11 +19,11 @@ class FlocoClient(FedAvgClient):
         if package["subregion_parameters"]:
             self.model.sample_from = package["sample_from"]
             self.model.subregion_parameters = package["subregion_parameters"]
-        self.global_params = OrderedDict(
-            (key, param.to(self.device))
-            for key, param in package["regular_model_params"].items()
-        ).values()
         if self.args.floco.pers_epoch > 0:  # Floco+
+            self.global_params = OrderedDict(
+                (key, param.to(self.device))
+                for key, param in package["regular_model_params"].items()
+            )
             self.pers_model.load_state_dict(package["personalized_model_params"])
 
     def package(self):
@@ -85,7 +85,7 @@ def training_loop(
             loss = criterion(logit, y)
             optimizer.zero_grad()
             loss.backward()
-            if reg_model_params is not None:
+            if reg_model_params is not None:  # Floco+
                 _regularize_pers_model(model, reg_model_params, lamda)
             optimizer.step()
         if lr_scheduler is not None:
