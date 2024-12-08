@@ -86,13 +86,12 @@ def vectorize(
         return torch.cat([func(param).flatten() for param in src.state_dict().values()])
     elif isinstance(src, Iterator):
         return torch.cat([func(param).flatten() for param in src])
-
-
+    
 @torch.no_grad()
-def evaluate_model(
+def evalutate_model(
     model: torch.nn.Module,
     dataloader: DataLoader,
-    criterion,
+    criterion=torch.nn.CrossEntropyLoss(reduction="sum"),
     device=torch.device("cpu"),
     global_test: bool = False,
 ) -> Metrics:
@@ -111,39 +110,72 @@ def evaluate_model(
     model.to(device)
     if global_test:
         model.sample_from = "simplex_center"
-    num_classes = len(dataloader.dataset.dataset.classes)
-    ece_fn = CalibrationError(task="multiclass", num_classes=num_classes)
-    accumulated_loss = 0.0
-    correct_samples = 0
-    all_targets = []
-    pred_vectors = []
-    label_vectors = []
-    # count predictions for each class
-    correct_pred = {classname: 0 for classname in range(num_classes)}
-    total_pred = {classname: 0 for classname in range(num_classes)}
-    with torch.no_grad():
-        for batch in dataloader:
-            data, target = batch
-            data, target = data.to(device), target.flatten().to(device) 
-            all_targets.append(target.cpu())
-            output = model(data)
-            accumulated_loss += criterion(output, target).item()
-            # get the index of the max log-probability
-            pred = output.argmax(dim=1)
-            correct_samples += torch.sum(pred == target).item()
-            pred_vectors.append(torch.softmax(output, dim=1).detach().cpu())
-            label_vectors.append(target.detach().cpu())
-            # Get single class accs
-            for label, prediction in zip(target, pred):
-                if label == prediction:
-                    correct_pred[range(num_classes)[label]] += 1
-                total_pred[range(num_classes)[label]] += 1
-    test_loss = accumulated_loss / len(dataloader)
-    test_acc = correct_samples / len(dataloader.dataset)
-    pred_vector = torch.cat(pred_vectors)
-    label_vector = torch.cat(label_vectors)
-    test_ece = ece_fn(pred_vector, label_vector)
-    return float(test_acc), float(test_loss), float(test_ece)
+    metrics = Metrics()
+    for x, y in dataloader:
+        x, y = x.to(device), y.to(device)
+        logits = model(x)
+        loss = criterion(logits, y).item()
+        pred = torch.argmax(logits, -1)
+        metrics.update(Metrics(loss, pred, y))
+    return metrics
+
+
+# @torch.no_grad()
+# def evaluate_model(
+#     model: torch.nn.Module,
+#     dataloader: DataLoader,
+#     criterion,
+#     device=torch.device("cpu"),
+#     global_test: bool = False,
+# ) -> Metrics:
+#     """For evaluating the `model` over `dataloader` and return metrics.
+
+#     Args:
+#         model (torch.nn.Module): Target model.
+#         dataloader (DataLoader): Target dataloader.
+#         criterion (optional): The metric criterion. Defaults to torch.nn.CrossEntropyLoss(reduction="sum").
+#         device (torch.device, optional): The device that holds the computation. Defaults to torch.device("cpu").
+
+#     Returns:
+#         Metrics: The metrics objective.
+#     """
+#     model.eval()
+#     model.to(device)
+#     if global_test:
+#         model.sample_from = "simplex_center"
+#     num_classes = len(dataloader.dataset.dataset.classes)
+#     ece_fn = CalibrationError(task="multiclass", num_classes=num_classes)
+#     accumulated_loss = 0.0
+#     correct_samples = 0
+#     all_targets = []
+#     pred_vectors = []
+#     label_vectors = []
+#     # count predictions for each class
+#     correct_pred = {classname: 0 for classname in range(num_classes)}
+#     total_pred = {classname: 0 for classname in range(num_classes)}
+#     with torch.no_grad():
+#         for batch in dataloader:
+#             data, target = batch
+#             data, target = data.to(device), target.flatten().to(device) 
+#             all_targets.append(target.cpu())
+#             output = model(data)
+#             accumulated_loss += criterion(output, target).item()
+#             # get the index of the max log-probability
+#             pred = output.argmax(dim=1)
+#             correct_samples += torch.sum(pred == target).item()
+#             pred_vectors.append(torch.softmax(output, dim=1).detach().cpu())
+#             label_vectors.append(target.detach().cpu())
+#             # Get single class accs
+#             for label, prediction in zip(target, pred):
+#                 if label == prediction:
+#                     correct_pred[range(num_classes)[label]] += 1
+#                 total_pred[range(num_classes)[label]] += 1
+#     test_loss = accumulated_loss / len(dataloader)
+#     test_acc = correct_samples / len(dataloader.dataset)
+#     pred_vector = torch.cat(pred_vectors)
+#     label_vector = torch.cat(label_vectors)
+#     test_ece = ece_fn(pred_vector, label_vector)
+#     return float(test_acc), float(test_loss), float(test_ece)
 
 def parse_args(
     config: DictConfig,

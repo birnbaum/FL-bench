@@ -131,15 +131,10 @@ class FedAvgClient:
         ]:
             if len(subset) > 0 and flag:
                 eval_msg.append(
-                    "client [{}] [{}]({})  loss: {:.4f} -> {:.4f}   accuracy: {:.2f}% -> {:.2f}%".format(
-                        self.client_id,
-                        color,
-                        split,
-                        eval_results["before"][split]['loss'],
-                        eval_results["after"][split]['loss'],
-                        eval_results["before"][split]['acc'],
-                        eval_results["after"][split]['acc'],
-                    )
+                    f"client [{self.client_id}]\t"
+                    f"[{color}]({split}set)\t"
+                    f"loss: {eval_results['before'][split].loss:.4f} -> {eval_results['after'][split].loss:.4f}\t"
+                    f"accuracy: {eval_results['before'][split].accuracy:.2f}% -> {eval_results['after'][split].accuracy:.2f}%"
                 )
 
         eval_results["message"] = eval_msg
@@ -261,9 +256,20 @@ class FedAvgClient:
         target_model.eval()
         self.model.eval()
         self.dataset.eval()
+        train_metrics = Metrics()
+        val_metrics = Metrics()
+        test_metrics = Metrics()
         criterion = torch.nn.CrossEntropyLoss(reduction="sum")
         if len(self.testset) > 0 and self.args.common.eval_test:
-            test_acc, test_loss, test_ece = evaluate_model(
+            # test_acc, test_loss, test_ece = evaluate_model(
+            #         # Always global model
+            #         model=self.model,
+            #         dataloader=self.testloader,
+            #         criterion=criterion,
+            #         device=self.device,
+            #         global_test=True
+            #     )
+            test_metrics = evaluate_model(
                     # Always global model
                     model=self.model,
                     dataloader=self.testloader,
@@ -275,7 +281,13 @@ class FedAvgClient:
             test_acc, test_loss, test_ece = 0., 0., 0.
 
         if len(self.valset) > 0 and self.args.common.eval_val:
-            val_acc, val_loss, val_ece = evaluate_model(
+            # val_acc, val_loss, val_ece = evaluate_model(
+            #     model=target_model,
+            #     dataloader=self.valloader,
+            #     criterion=criterion,
+            #     device=self.device,
+            # )
+            val_metrics = evaluate_model(
                 model=target_model,
                 dataloader=self.valloader,
                 criterion=criterion,
@@ -285,7 +297,13 @@ class FedAvgClient:
             val_acc, val_loss, val_ece = 0., 0., 0.
         
         if len(self.trainset) > 0 and self.args.common.eval_train:
-            train_acc, train_loss, train_ece = evaluate_model(
+            # train_acc, train_loss, train_ece = evaluate_model(
+            #     model=target_model,
+            #     dataloader=self.trainloader,
+            #     criterion=criterion,
+            #     device=self.device,
+            # )
+            train_metrics = evaluate_model(
                 model=target_model,
                 dataloader=self.trainloader,
                 criterion=criterion,
@@ -294,23 +312,24 @@ class FedAvgClient:
         else:
             train_acc, train_loss, train_ece = 0., 0., 0.
 
-        return {
-                "train": {
-                    "acc": train_acc,
-                    "loss": train_loss,
-                    "ece": train_ece,
-                },
-                "val": {
-                    "acc": val_acc,
-                    "loss": val_loss,
-                    "ece": val_ece,
-                },
-                "test": {
-                    "acc": test_acc,
-                    "loss": test_loss,
-                    "ece": test_ece,
-                }
-                }
+        # return {
+        #         "train": {
+        #             "acc": train_acc,
+        #             "loss": train_loss,
+        #             "ece": train_ece,
+        #         },
+        #         "val": {
+        #             "acc": val_acc,
+        #             "loss": val_loss,
+        #             "ece": val_ece,
+        #         },
+        #         "test": {
+        #             "acc": test_acc,
+        #             "loss": test_loss,
+        #             "ece": test_ece,
+        #         }
+        #         }
+        return {"train": train_metrics, "val": val_metrics, "test": test_metrics}
 
     def test(self, server_package: dict[str, Any]) -> dict[str, dict[str, Metrics]]:
         """Test client model. If `finetune_epoch > 0`, `finetune()` will be
@@ -331,9 +350,14 @@ class FedAvgClient:
         self.testing = True
         self.set_parameters(server_package)
 
+        # results = {
+        #     "before": {"train": {}, "val": {}, "test": {}},
+        #     "after": {"train": {"acc": 0.0, "ece": 0.0, "loss": 0.0}, "val": {"acc": 0.0, "ece": 0.0, "loss": 0.0}, "test": {"acc": 0.0, "ece": 0.0, "loss": 0.0}},
+        # }
+
         results = {
-            "before": {"train": {}, "val": {}, "test": {}},
-            "after": {"train": {"acc": 0.0, "ece": 0.0, "loss": 0.0}, "val": {"acc": 0.0, "ece": 0.0, "loss": 0.0}, "test": {"acc": 0.0, "ece": 0.0, "loss": 0.0}},
+            "before": {"train": Metrics(), "val": Metrics(), "test": Metrics()},
+            "after": {"train": Metrics(), "val": Metrics(), "test": Metrics()},
         }
 
         results["before"] = self.evaluate()
