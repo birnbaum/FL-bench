@@ -8,3 +8,4 @@ venv
 logs/
 .vscode
 *.ipynb_checkpoints
+data/cifar10

@@ -97,7 +97,7 @@ class FedPACClient(FedAvgClient):
 
     def fit(self):
         self.model.train()
-        self.train_dataset.train()
+        self.dataset.train()
         local_prototypes = self.calculate_prototypes(mean=True)
         for E in range(self.local_epoch):
             if E < self.args.fedpac.train_classifier_round:

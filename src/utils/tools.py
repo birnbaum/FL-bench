@@ -92,7 +92,7 @@ def vectorize(
 def evaluate_model(
     model: torch.nn.Module,
     dataloader: DataLoader,
-    num_classes: int,
+    criterion,
     device=torch.device("cpu"),
     global_test: bool = False,
 ) -> Metrics:
@@ -111,6 +111,7 @@ def evaluate_model(
     model.to(device)
     if global_test:
         model.sample_from = "simplex_center"
+    num_classes = len(dataloader.dataset.dataset.classes)
     ece_fn = CalibrationError(task="multiclass", num_classes=num_classes)
     accumulated_loss = 0.0
     correct_samples = 0
@@ -126,7 +127,7 @@ def evaluate_model(
             data, target = data.to(device), target.flatten().to(device) 
             all_targets.append(target.cpu())
             output = model(data)
-            accumulated_loss += torch.nn.CrossEntropyLoss()(output, target).item()
+            accumulated_loss += criterion(output, target).item()
             # get the index of the max log-probability
             pred = output.argmax(dim=1)
             correct_samples += torch.sum(pred == target).item()

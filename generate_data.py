@@ -65,10 +65,13 @@ def main(args):
     else:  # MEDMNIST, COVID, MNIST, CIFAR10, ...
         # NOTE: If `args.ood_domains`` is not empty, then FL-bench will map all labels (class space) to the domain space
         # and partition data according to the new `targets` array.
-        print(args.dataset)
+
         dataset = DATASETS[args.dataset](dataset_root, args)
         targets = np.array(dataset.targets, dtype=np.int32)
-        target_indices = np.arange(len(targets), dtype=np.int32)
+
+        # Split training dataset indices from test dataset indices
+        if args.dataset == "cifar10":
+            target_indices = np.arange(len(targets), dtype=np.int32)[:50000]
         valid_label_set = set(range(len(dataset.classes)))
         if args.dataset in ["domain"] and args.ood_domains:
             metadata = json.load(open(dataset_root / "metadata.json", "r"))

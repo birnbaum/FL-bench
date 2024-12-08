@@ -3,14 +3,13 @@ from copy import deepcopy
 from typing import Any
 
 import torch
-import numpy as np
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader, Subset
 
 from data.utils.datasets import BaseDataset
 from src.utils.metrics import Metrics
 from src.utils.models import DecoupledModel
-from src.utils.tools import evaluate_model, get_optimal_cuda_device
+from src.utils.tools import evalutate_model, get_optimal_cuda_device
 
 
 class FedAvgClient:
@@ -24,9 +23,6 @@ class FedAvgClient:
         data_indices: list,
         device: torch.device | None,
         return_diff: bool,
-        train_clients: list[int] = None,
-        client_id_mapping: dict = None,
-        true_train_clients: list[int] = None,
     ):
         self.client_id: int = None
         self.args = args
@@ -34,10 +30,7 @@ class FedAvgClient:
             self.device = get_optimal_cuda_device(use_cuda=self.args.common.use_cuda)
         else:
             self.device = device
-        self.train_clients = train_clients
         self.dataset = dataset
-        self.client_id_mapping = client_id_mapping
-        self.true_train_clients = true_train_clients # Necessary for FEMNIST experiments
         self.model = model.to(self.device)
         self.regular_model_params: OrderedDict[str, torch.Tensor]
         self.personal_params_name: list[str] = []
@@ -66,8 +59,6 @@ class FedAvgClient:
         self.trainset = Subset(self.dataset, indices=[0])
         self.valset = Subset(self.dataset, indices=[])
         self.testset = Subset(self.dataset, indices=[])
-        if self.args.dataset.name == "femnist":
-            self.testset = Subset(self.train_dataset, indices=[])
         self.trainloader = DataLoader(
             self.trainset, batch_size=self.args.common.batch_size, shuffle=True
         )
@@ -87,20 +78,9 @@ class FedAvgClient:
     def load_data_indices(self):
         """This function is for loading data indices for No.`self.client_id`
         client."""
-        if self.args.dataset.name == "femnist":
-            self.trainset.indices = self.data_indices[self.client_id_mapping[self.client_id]]["train"]
-            self.valset.indices = self.data_indices[self.client_id_mapping[self.client_id]]["test"]
-            self.testset.indices = self.data_indices[self.client_id]["test"]
-        else:
-            self.trainset.indices = self.data_indices[self.client_id]["train"]
-            self.valset.indices = self.data_indices[self.client_id]["val"]
-            self.testset.indices = self.data_indices[self.client_id]["test"]
-        if self.client_id in [99]:
-            self.testset.indices = np.arange(50000,60000,1)
-            if self.args.dataset.name == "femnist":
-                self.testset.indices = np.concatenate(
-                    [self.data_indices[self.client_id_mapping[client_id]]["test"] for client_id in self.true_train_clients]
-                )
+        self.trainset.indices = self.data_indices[self.client_id]["train"]
+        self.valset.indices = self.data_indices[self.client_id]["val"]
+        self.testset.indices = self.data_indices[self.client_id]["test"]
 
     def train_with_eval(self):
         """Wraps `fit()` with `evaluate()` and collect model evaluation
@@ -131,15 +111,10 @@ class FedAvgClient:
         ]:
             if len(subset) > 0 and flag:
                 eval_msg.append(
-                    "client [{}] [{}]({})  loss: {:.4f} -> {:.4f}   accuracy: {:.2f}% -> {:.2f}%".format(
-                        self.client_id,
-                        color,
-                        split,
-                        eval_results["before"][split]['loss'],
-                        eval_results["after"][split]['loss'],
-                        eval_results["before"][split]['acc'],
-                        eval_results["after"][split]['acc'],
-                    )
+                    f"client [{self.client_id}]\t"
+                    f"[{color}]({split}set)\t"
+                    f"loss: {eval_results['before'][split].loss:.4f} -> {eval_results['after'][split].loss:.4f}\t"
+                    f"accuracy: {eval_results['before'][split].accuracy:.2f}% -> {eval_results['after'][split].accuracy:.2f}%"
                 )
 
         eval_results["message"] = eval_msg
@@ -259,58 +234,36 @@ class FedAvgClient:
         """
         target_model = self.model if model is None else model
         target_model.eval()
-        self.model.eval()
         self.dataset.eval()
+        train_metrics = Metrics()
+        val_metrics = Metrics()
+        test_metrics = Metrics()
         criterion = torch.nn.CrossEntropyLoss(reduction="sum")
+
         if len(self.testset) > 0 and self.args.common.eval_test:
-            test_acc, test_loss, test_ece = evaluate_model(
-                    # Always global model
-                    model=self.model,
-                    dataloader=self.testloader,
-                    criterion=criterion,
-                    device=self.device,
-                    global_test=True
-                )
-        else:
-            test_acc, test_loss, test_ece = 0., 0., 0.
+            test_metrics = evalutate_model(
+                model=target_model,
+                dataloader=self.testloader,
+                criterion=criterion,
+                device=self.device,
+            )
 
         if len(self.valset) > 0 and self.args.common.eval_val:
-            val_acc, val_loss, val_ece = evaluate_model(
+            val_metrics = evalutate_model(
                 model=target_model,
                 dataloader=self.valloader,
                 criterion=criterion,
                 device=self.device,
             )
-        else:
-            val_acc, val_loss, val_ece = 0., 0., 0.
-        
+
         if len(self.trainset) > 0 and self.args.common.eval_train:
-            train_acc, train_loss, train_ece = evaluate_model(
+            train_metrics = evalutate_model(
                 model=target_model,
                 dataloader=self.trainloader,
                 criterion=criterion,
                 device=self.device,
             )
-        else:
-            train_acc, train_loss, train_ece = 0., 0., 0.
-
-        return {
-                "train": {
-                    "acc": train_acc,
-                    "loss": train_loss,
-                    "ece": train_ece,
-                },
-                "val": {
-                    "acc": val_acc,
-                    "loss": val_loss,
-                    "ece": val_ece,
-                },
-                "test": {
-                    "acc": test_acc,
-                    "loss": test_loss,
-                    "ece": test_ece,
-                }
-                }
+        return {"train": train_metrics, "val": val_metrics, "test": test_metrics}
 
     def test(self, server_package: dict[str, Any]) -> dict[str, dict[str, Metrics]]:
         """Test client model. If `finetune_epoch > 0`, `finetune()` will be
@@ -332,8 +285,8 @@ class FedAvgClient:
         self.set_parameters(server_package)
 
         results = {
-            "before": {"train": {}, "val": {}, "test": {}},
-            "after": {"train": {"acc": 0.0, "ece": 0.0, "loss": 0.0}, "val": {"acc": 0.0, "ece": 0.0, "loss": 0.0}, "test": {"acc": 0.0, "ece": 0.0, "loss": 0.0}},
+            "before": {"train": Metrics(), "val": Metrics(), "test": Metrics()},
+            "after": {"train": Metrics(), "val": Metrics(), "test": Metrics()},
         }
 
         results["before"] = self.evaluate()
