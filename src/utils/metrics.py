@@ -16,26 +16,31 @@ def to_numpy(x):
 
 
 class Metrics:
-    def __init__(self, loss=None, predicts=None, targets=None):
+    def __init__(self, loss=None, predicts=None, targets=None, logits=None):
         self._loss = loss if loss is not None else 0.0
         self._targets = targets if targets is not None else []
         self._predicts = predicts if predicts is not None else []
+        self._logits = logits if logits is not None else []
+        self._num_classes = None
 
     def update(self, other):
         if other is not None:
             self._predicts.extend(to_numpy(other._predicts))
             self._targets.extend(to_numpy(other._targets))
+            self._logits.extend(to_numpy(other._logits))
             self._loss += other._loss
 
     def _calculate(self, metric, **kwargs):
-        print(self._predicts)
         return metric(self._targets, self._predicts, **kwargs)
 
     @property
     def ece(self):
-        ece_fn = CalibrationError(task="multiclass", num_classes=len(np.unique(self.targets)))
-        print(self._predicts)
-        return ece_fn(self._predicts, self._targets)
+        if len(self._targets) > 0:
+            self._num_classes = len(np.unique(self._targets))
+            ece_fn = CalibrationError(task="multiclass", num_classes=self._num_classes)
+            return ece_fn(torch.tensor(np.array(self._logits)), torch.tensor(np.array(self._targets)))
+        else:
+            return 0.0
 
     @property
     def loss(self):

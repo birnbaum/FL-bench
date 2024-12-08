@@ -605,82 +605,6 @@ class FedAvgServer:
                                 break
                         acc_range = acc_range[:min_acc_idx]
 
-    # def log_info(self):
-    #     """Accumulate client evaluation results at each round."""
-    #     if (self.current_epoch + 1) % self.args.common.test_interval == 0:
-    #         if np.sum(self.test_results[self.current_epoch]["all_clients"]["after"]["val"]["acc"]) != 0.0:
-    #             finetune_epoch_flag = "after"
-    #         else:
-    #             finetune_epoch_flag = "before"
-
-    #         # Personalized model metrics
-
-    #         self.tensorboard.add_scalar(
-    #             "avg_train_acc",
-    #             np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["train"]["acc"]),
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-    #         self.tensorboard.add_scalar(
-    #             "avg_train_ece",
-    #             np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["train"]["ece"]),
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-    #         self.tensorboard.add_scalar(
-    #             "avg_train_loss",
-    #             np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["train"]["loss"]),
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-
-    #         self.tensorboard.add_scalar(
-    #             "avg_val_acc",
-    #             np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["val"]["acc"]),
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-    #         self.tensorboard.add_scalar(
-    #             "avg_val_ece",
-    #             np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["val"]["ece"]),
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-    #         self.tensorboard.add_scalar(
-    #             "avg_val_loss",
-    #             np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["val"]["loss"]),
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-
-    #         # Personalized model metrics
-    #         for clid, cl_val_acc in enumerate(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["val"]["acc"]):
-    #             self.tensorboard.add_scalar(
-    #                 f"clients_stats/val_acc_cl_{clid}",
-    #                 cl_val_acc,
-    #                 self.current_epoch + 1,
-    #                 new_style=True,
-    #             )
-
-    #         # Global model metrics
-    #         self.tensorboard.add_scalar(
-    #             "test/center_acc",
-    #             self.test_results[self.current_epoch]["all_clients"]["before"]["test"]["acc"][-1],
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-    #         self.tensorboard.add_scalar(
-    #             "test/center_ece",
-    #             self.test_results[self.current_epoch]["all_clients"]["before"]["test"]["ece"][-1],
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-    #         self.tensorboard.add_scalar(
-    #             "test/center_loss",
-    #             self.test_results[self.current_epoch]["all_clients"]["before"]["test"]["loss"][-1],
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
 
     def log_info(self):
         """Accumulate client evaluation results at each round."""
@@ -689,7 +613,7 @@ class FedAvgServer:
                 ("train", self.args.common.eval_train),
                 ("val", self.args.common.eval_val),
                 ("test", self.args.common.eval_test),
-            ]:  
+            ]:
 
                 if flag:
                     global_metrics = Metrics()
@@ -716,8 +640,20 @@ class FedAvgServer:
                         )
                     elif self.args.common.monitor == "tensorboard":
                         self.tensorboard.add_scalar(
+                            f"Loss-{self.monitor_window_name_suffix}/{split}set-{stage}LocalTraining",
+                            global_metrics.loss,
+                            self.current_epoch,
+                            new_style=True,
+                        )
+                        self.tensorboard.add_scalar(
                             f"Accuracy-{self.monitor_window_name_suffix}/{split}set-{stage}LocalTraining",
                             global_metrics.accuracy,
+                            self.current_epoch,
+                            new_style=True,
+                        )
+                        self.tensorboard.add_scalar(
+                            f"ECE-{self.monitor_window_name_suffix}/{split}set-{stage}LocalTraining",
+                            global_metrics.ece,
                             self.current_epoch,
                             new_style=True,
                         )
@@ -729,10 +665,24 @@ class FedAvgServer:
                                         self.test_results.items(),
                                     )
                         )
+                        if test_metrics_list[-1][1].loss != 0.0:
+                            self.tensorboard.add_scalar(
+                                f"Loss-{self.monitor_window_name_suffix}/All_clients_{split}set-{stage}",
+                                test_metrics_list[-1][1].loss,
+                                self.current_epoch,
+                                new_style=True,
+                            )
                         if test_metrics_list[-1][1].accuracy != 0.0:
                             self.tensorboard.add_scalar(
-                                f"Accuracy-{self.monitor_window_name_suffix}/All_clients_{split}set-{stage}LocalTraining",
+                                f"Accuracy-{self.monitor_window_name_suffix}/All_clients_{split}set-{stage}",
                                 test_metrics_list[-1][1].accuracy,
+                                self.current_epoch,
+                                new_style=True,
+                            )
+                        if test_metrics_list[-1][1].ece != 0.0:
+                            self.tensorboard.add_scalar(
+                                f"ECE-{self.monitor_window_name_suffix}/All_clients_{split}set-{stage}",
+                                test_metrics_list[-1][1].ece,
                                 self.current_epoch,
                                 new_style=True,
                             )

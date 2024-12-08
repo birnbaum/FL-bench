@@ -261,14 +261,6 @@ class FedAvgClient:
         test_metrics = Metrics()
         criterion = torch.nn.CrossEntropyLoss(reduction="sum")
         if len(self.testset) > 0 and self.args.common.eval_test:
-            # test_acc, test_loss, test_ece = evaluate_model(
-            #         # Always global model
-            #         model=self.model,
-            #         dataloader=self.testloader,
-            #         criterion=criterion,
-            #         device=self.device,
-            #         global_test=True
-            #     )
             test_metrics = evaluate_model(
                     # Always global model
                     model=self.model,
@@ -277,58 +269,23 @@ class FedAvgClient:
                     device=self.device,
                     global_test=True
                 )
-        else:
-            test_acc, test_loss, test_ece = 0., 0., 0.
 
         if len(self.valset) > 0 and self.args.common.eval_val:
-            # val_acc, val_loss, val_ece = evaluate_model(
-            #     model=target_model,
-            #     dataloader=self.valloader,
-            #     criterion=criterion,
-            #     device=self.device,
-            # )
             val_metrics = evaluate_model(
                 model=target_model,
                 dataloader=self.valloader,
                 criterion=criterion,
                 device=self.device,
             )
-        else:
-            val_acc, val_loss, val_ece = 0., 0., 0.
         
         if len(self.trainset) > 0 and self.args.common.eval_train:
-            # train_acc, train_loss, train_ece = evaluate_model(
-            #     model=target_model,
-            #     dataloader=self.trainloader,
-            #     criterion=criterion,
-            #     device=self.device,
-            # )
             train_metrics = evaluate_model(
                 model=target_model,
                 dataloader=self.trainloader,
                 criterion=criterion,
                 device=self.device,
             )
-        else:
-            train_acc, train_loss, train_ece = 0., 0., 0.
 
-        # return {
-        #         "train": {
-        #             "acc": train_acc,
-        #             "loss": train_loss,
-        #             "ece": train_ece,
-        #         },
-        #         "val": {
-        #             "acc": val_acc,
-        #             "loss": val_loss,
-        #             "ece": val_ece,
-        #         },
-        #         "test": {
-        #             "acc": test_acc,
-        #             "loss": test_loss,
-        #             "ece": test_ece,
-        #         }
-        #         }
         return {"train": train_metrics, "val": val_metrics, "test": test_metrics}
 
     def test(self, server_package: dict[str, Any]) -> dict[str, dict[str, Metrics]]:

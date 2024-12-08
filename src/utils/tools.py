@@ -116,7 +116,7 @@ def evaluate_model(
         logits = model(x)
         loss = criterion(logits, y).item()
         pred = torch.argmax(logits, -1)
-        metrics.update(Metrics(loss, pred, y))
+        metrics.update(Metrics(loss, pred, y, logits))
     return metrics
 
 
