@@ -12,7 +12,6 @@ import torch
 from omegaconf import DictConfig
 from rich.console import Console
 from torch.utils.data import DataLoader
-from torchmetrics import CalibrationError
 
 from src.utils.constants import DEFAULTS
 from src.utils.metrics import Metrics
@@ -88,7 +87,7 @@ def vectorize(
         return torch.cat([func(param).flatten() for param in src])
     
 @torch.no_grad()
-def evalutate_model(
+def evaluate_model(
     model: torch.nn.Module,
     dataloader: DataLoader,
     criterion=torch.nn.CrossEntropyLoss(reduction="sum"),

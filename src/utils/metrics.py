@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from sklearn import metrics
+from torchmetrics import CalibrationError
 
 
 def to_numpy(x):
@@ -27,7 +28,14 @@ class Metrics:
             self._loss += other._loss
 
     def _calculate(self, metric, **kwargs):
+        print(self._predicts)
         return metric(self._targets, self._predicts, **kwargs)
+
+    @property
+    def ece(self):
+        ece_fn = CalibrationError(task="multiclass", num_classes=len(np.unique(self.targets)))
+        print(self._predicts)
+        return ece_fn(self._predicts, self._targets)
 
     @property
     def loss(self):

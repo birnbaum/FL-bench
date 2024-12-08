@@ -78,12 +78,12 @@ parallel:
 
 common:
   seed: 0 # Random seed of the run.
-  join_ratio: 0.3 # Ratio for (client each round) / (client num in total).
+  join_ratio: 0.05 # Ratio for (client each round) / (client num in total).
   global_epoch: 500 # Number of global epochs, also called communication round.
   local_epoch: 5 # Number if epochs of client local training.
   finetune_epoch: 0 # Number of epochs of clients fine-tunning their models before test.
   batch_size: 50 # Data batch size for client local training.
-  test_interval: 10 # Interval round of performing test on all test clients.
+  test_interval: 1 # Interval round of performing test on all test clients.
   client_num: 100
 
   # The ratio of stragglers (set in [0, 1]).

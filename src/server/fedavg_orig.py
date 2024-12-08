@@ -83,29 +83,15 @@ class FedAvgServer:
                 partition = pickle.load(f)
         except:
             raise FileNotFoundError(f"Please partition {self.args.dataset.name} first.")
-
-        self.client_num: int = self.args.common.client_num
-        # For LEAF dataset sample client_num random clients
-        if self.args.dataset.name in ['femnist']:
-            permuted_client_list = np.random.default_rng(
-                seed=self.args.common.seed).permutation(np.arange(partition["separation"]["total"]))[:self.client_num]
-            sampled_train_clients = list(np.array(partition["separation"]["train"])[permuted_client_list])
-            self.client_id_mapping = { 
-                i: sampled_train_clients[i] for i in range(self.client_num)
-            }
-            self.train_clients, self.val_clients, self.test_clients = list(range(self.client_num)), list(range(self.client_num)), list(range(self.client_num))
-        # For the other datasets the client num is determined at dataset generation
-        else:
-            self.client_id_mapping = {}
-            self.train_clients: list[int] = list(np.array(partition["separation"]["train"]))
-            self.test_clients: list[int] = list(np.array(partition["separation"]["test"]))
-            self.val_clients: list[int] = list(np.array(partition["separation"]["val"]))
+        self.train_clients: list[int] = partition["separation"]["train"]
+        self.test_clients: list[int] = partition["separation"]["test"]
+        self.val_clients: list[int] = partition["separation"]["val"]
+        self.client_num: int = partition["separation"]["total"]
 
         # init model(s) parameters
         self.model: DecoupledModel = MODELS[self.args.model.name](
             dataset=self.args.dataset.name,
             pretrained=self.args.model.use_torchvision_pretrained_weights,
-            seed=self.args.common.seed,
         )
         self.model.check_and_preprocess(self.args)
 
@@ -256,9 +242,6 @@ class FedAvgServer:
                     data_indices=self.get_clients_data_indices(),
                     device=self.device,
                     return_diff=self.return_diff,
-                    train_clients=self.train_clients,
-                    true_train_clients = self.train_clients,
-                    client_id_mapping=self.client_id_mapping,
                     **extras,
                 ),
             )
@@ -285,9 +268,6 @@ class FedAvgServer:
                     data_indices=data_indices_ref,
                     device=device_ref,
                     return_diff=return_diff_ref,
-                    train_clients=self.train_clients,
-                    true_train_clients = self.train_clients,
-                    client_id_mapping=self.client_id_mapping,
                     **{key: ray.put(value) for key, value in extras.items()},
                 ),
             )
@@ -441,13 +421,13 @@ class FedAvgServer:
             begin = time.time()
             self.train_one_round()
             end = time.time()
+            self.log_info()
             avg_round_time = (avg_round_time * self.current_epoch + (end - begin)) / (
                 self.current_epoch + 1
             )
 
             if (E + 1) % self.args.common.test_interval == 0:
                 self.test()
-            self.log_info()
 
         self.logger.log(
             f"{self.algorithm_name}'s average time taken by each global epoch: "
@@ -493,19 +473,30 @@ class FedAvgServer:
         )
 
     def test(self):
-        """The function for testing FL method's output (a single global model or personalized client models)."""
+        """The function for testing FL method's output (a single global model
+        or personalized client models)."""
         self.testing = True
-        # Test all clients always
-        clients = self.train_clients
+        clients = list(set(self.val_clients + self.test_clients))
         template = {
             "before": {"train": Metrics(), "val": Metrics(), "test": Metrics()},
             "after": {"train": Metrics(), "val": Metrics(), "test": Metrics()},
         }
         if len(clients) > 0:
-            results = {"all_clients": template}
-            self.trainer.test(clients, results["all_clients"])
-            self.test_results[self.current_epoch] = results
-        
+            if self.val_clients == self.train_clients == self.test_clients:
+                results = {"all_clients": template}
+                self.trainer.test(clients, results["all_clients"])
+            else:
+                results = {
+                    "val_clients": deepcopy(template),
+                    "test_clients": deepcopy(template),
+                }
+                if len(self.val_clients) > 0:
+                    self.trainer.test(self.val_clients, results["val_clients"])
+                if len(self.test_clients) > 0:
+                    self.trainer.test(self.test_clients, results["test_clients"])
+
+            self.test_results[self.current_epoch + 1] = results
+
         self.testing = False
 
     def get_client_model_params(self, client_id: int) -> OrderedDict[str, torch.Tensor]:
@@ -605,83 +596,6 @@ class FedAvgServer:
                                 break
                         acc_range = acc_range[:min_acc_idx]
 
-    # def log_info(self):
-    #     """Accumulate client evaluation results at each round."""
-    #     if (self.current_epoch + 1) % self.args.common.test_interval == 0:
-    #         if np.sum(self.test_results[self.current_epoch]["all_clients"]["after"]["val"]["acc"]) != 0.0:
-    #             finetune_epoch_flag = "after"
-    #         else:
-    #             finetune_epoch_flag = "before"
-
-    #         # Personalized model metrics
-
-    #         self.tensorboard.add_scalar(
-    #             "avg_train_acc",
-    #             np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["train"]["acc"]),
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-    #         self.tensorboard.add_scalar(
-    #             "avg_train_ece",
-    #             np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["train"]["ece"]),
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-    #         self.tensorboard.add_scalar(
-    #             "avg_train_loss",
-    #             np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["train"]["loss"]),
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-
-    #         self.tensorboard.add_scalar(
-    #             "avg_val_acc",
-    #             np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["val"]["acc"]),
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-    #         self.tensorboard.add_scalar(
-    #             "avg_val_ece",
-    #             np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["val"]["ece"]),
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-    #         self.tensorboard.add_scalar(
-    #             "avg_val_loss",
-    #             np.mean(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["val"]["loss"]),
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-
-    #         # Personalized model metrics
-    #         for clid, cl_val_acc in enumerate(self.test_results[self.current_epoch]["all_clients"][finetune_epoch_flag]["val"]["acc"]):
-    #             self.tensorboard.add_scalar(
-    #                 f"clients_stats/val_acc_cl_{clid}",
-    #                 cl_val_acc,
-    #                 self.current_epoch + 1,
-    #                 new_style=True,
-    #             )
-
-    #         # Global model metrics
-    #         self.tensorboard.add_scalar(
-    #             "test/center_acc",
-    #             self.test_results[self.current_epoch]["all_clients"]["before"]["test"]["acc"][-1],
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-    #         self.tensorboard.add_scalar(
-    #             "test/center_ece",
-    #             self.test_results[self.current_epoch]["all_clients"]["before"]["test"]["ece"][-1],
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-    #         self.tensorboard.add_scalar(
-    #             "test/center_loss",
-    #             self.test_results[self.current_epoch]["all_clients"]["before"]["test"]["loss"][-1],
-    #             self.current_epoch + 1,
-    #             new_style=True,
-    #         )
-
     def log_info(self):
         """Accumulate client evaluation results at each round."""
         for stage in ["before", "after"]:
@@ -689,8 +603,7 @@ class FedAvgServer:
                 ("train", self.args.common.eval_train),
                 ("val", self.args.common.eval_val),
                 ("test", self.args.common.eval_test),
-            ]:  
-
+            ]:
                 if flag:
                     global_metrics = Metrics()
                     for i in self.selected_clients:
@@ -721,21 +634,6 @@ class FedAvgServer:
                             self.current_epoch,
                             new_style=True,
                         )
-
-                    if (self.current_epoch + 1) % self.args.common.test_interval == 0:
-                        test_metrics_list = list(
-                                    map(
-                                        lambda tup: (tup[0], tup[1]["all_clients"][stage][split]),
-                                        self.test_results.items(),
-                                    )
-                        )
-                        if test_metrics_list[-1][1].accuracy != 0.0:
-                            self.tensorboard.add_scalar(
-                                f"Accuracy-{self.monitor_window_name_suffix}/All_clients_{split}set-{stage}LocalTraining",
-                                test_metrics_list[-1][1].accuracy,
-                                self.current_epoch,
-                                new_style=True,
-                            )
 
     def show_max_metrics(self):
         """Show the maximum stats that FL method get."""
