@@ -88,12 +88,11 @@ def vectorize(
 
 
 @torch.no_grad()
-def evaluate_model(
+def evalutate_model(
     model: torch.nn.Module,
     dataloader: DataLoader,
     criterion=torch.nn.CrossEntropyLoss(reduction="sum"),
     device=torch.device("cpu"),
-    global_test: bool = False,
 ) -> Metrics:
     """For evaluating the `model` over `dataloader` and return metrics.
 
@@ -108,8 +107,6 @@ def evaluate_model(
     """
     model.eval()
     model.to(device)
-    if global_test:
-        model.sample_from = "simplex_center"
     metrics = Metrics()
     for x, y in dataloader:
         x, y = x.to(device), y.to(device)
@@ -205,8 +202,7 @@ def parse_args(
 
         cluster_resources = ray.cluster_resources()
         final_args.parallel.num_cpus = cluster_resources["CPU"]
-        if final_args.parallel.num_gpus > 0:
-            final_args.parallel.num_gpus = cluster_resources["GPU"]
+        final_args.parallel.num_gpus = cluster_resources["GPU"]
         if final_args.parallel.num_workers < 2:
             print(
                 f"num_workers is less than 2: {final_args.parallel.num_workers}, "
