@@ -37,7 +37,7 @@ class FlocoClient(FedAvgClient):
 
     def fit(self):
         common_params = dict(
-            dataset=self.train_dataset,
+            dataset=self.dataset,
             dataloader=self.trainloader,
             optimizer=self.optimizer,
             criterion=self.criterion,
@@ -59,9 +59,9 @@ class FlocoClient(FedAvgClient):
     @torch.no_grad()
     def evaluate(self):
         if self.args.floco.pers_epoch > 0:  # Floco+
-            super().evaluate(self.pers_model)
+            return super().evaluate(self.pers_model)
         else:
-            super().evaluate()
+            return super().evaluate()
 
 
 def training_loop(
@@ -93,6 +93,6 @@ def training_loop(
 
 
 def _regularize_pers_model(model, reg_model_params, lamda):
-    for pers_param, global_param in zip(model.parameters(), reg_model_params):
+    for pers_param, global_param in zip(model.parameters(), reg_model_params.values()):
         if pers_param.requires_grad and pers_param.grad is not None:
             pers_param.grad.data += lamda * pers_param.data - global_param.data
