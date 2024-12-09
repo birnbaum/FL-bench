@@ -135,6 +135,6 @@ fedrod:
   pers_epoch: 0
 floco:
   pers_epoch: 5
-  endpoints: 10
+  endpoints: 20
   tau: 250
-  rho: 0.1
+  rho: 0.01

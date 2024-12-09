@@ -116,7 +116,7 @@ class SimplexModel(DecoupledModel):
             bias=True,
             seed=self.args.common.seed,
         )
-        self.sample_from = "simplex_center"
+        self.sample_from = "simplex_uniform"
         self.subregion_parameters = None
 
     def forward(self, x):
