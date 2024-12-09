@@ -132,9 +132,9 @@ ditto:
 fedper:
   pers_epoch: 5
 fedrod:
-  pers_epoch: 5
+  pers_epoch: 0
 floco:
   pers_epoch: 5
   endpoints: 20
   tau: 250
-  rho: 0.01
+  rho: 0.1
