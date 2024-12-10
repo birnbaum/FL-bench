@@ -132,7 +132,7 @@ ditto:
 fedper:
   pers_epoch: 5
 fedrod:
-  pers_epoch: 0
+  pers_epoch: 5
 floco:
   pers_epoch: 5
   endpoints: 20
