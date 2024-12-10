@@ -658,7 +658,7 @@ class FedAvgServer:
                             new_style=True,
                         )
 
-                    if (self.current_epoch + 1) % self.args.common.test_interval == 0:
+                    if (self.current_epoch) % self.args.common.test_interval == 0:
                         test_metrics_list = list(
                                     map(
                                         lambda tup: (tup[0], tup[1]["all_clients"][stage][split]),
